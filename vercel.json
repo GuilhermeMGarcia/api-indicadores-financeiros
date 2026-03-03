@@ -6,6 +6,6 @@
     { "src": "/(.*)", "dest": "api/index.py" }
   ],
   "env": {
-    "PROXY_BASE_URL": "https://indicador-two.vercel.app/"
+    "PROXY_BASE_URL": "https://api-indicadores-financeiros.vercel.app"
   }
 }
