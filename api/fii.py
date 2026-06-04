@@ -27,6 +27,7 @@ async def get_fii_data(ticker: str):
             "Ativos": ("patrimonio", parse_int),
             "Patrim Líquido": ("patrimonio_liq", parse_int),
             "Receita": ("receita_3m", parse_int),
+            "Venda de ativos": ("venda_de_ativos_3m", parse_int),
             "FFO": ("ffo_3m", parse_int),
             "Cap Rate": ("cap_rate", parse_percent),
             "Vacância Média": ("vacância_média", parse_percent),
