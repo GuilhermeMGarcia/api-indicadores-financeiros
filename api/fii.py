@@ -32,6 +32,7 @@ async def get_fii_data(ticker: str):
             "Cap Rate": ("cap_rate", parse_percent),
             "Vacância Média": ("vacância_média", parse_percent),
             "Qtd imóveis": ("qtd_imóveis", parse_int),
+            "Qtd Unidades": ("qtd_unidades", parse_int),
             "Nro. Cotas": ("qtd_cotas", parse_int),
         }
 
