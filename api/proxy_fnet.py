@@ -1,173 +1,109 @@
 import asyncio
-from datetime import datetime
-from typing import List, Dict, Optional
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 import httpx
-import zoneinfo
 
 router = APIRouter()
 
-FNET_SESSION_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM"
-FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
+# 🚀 Mudamos para HTTP puro conforme o código de sucesso do Git!
+FNET_DATA_URL = "http://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
 
 
-class CalendarRequest(BaseModel):
-    fundos: List[Dict[str, str]]
-    current_month_only: Optional[bool] = True
-
-
-async def fetch_fundo_events(
-        client: httpx.AsyncClient,
-        ticker: str,
-        cnpj: str,
-        current_month_only: bool,
-        limit: int = 40  # Amostragem alta para garantir que o mês atual completo seja capturado
-) -> List[dict]:
+@router.get("/proxy_fnet/{cnpj}", tags=["Ferramentas de Diagnóstico (Proxy)"])
+async def debug_fnet_raw(cnpj: str):
     cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
 
-    # Parâmetros otimizados para a B3
+    # 🕒 Fuso Horário de Brasília (UTC-3) seguro e nativo do Python
+    fuso_br = timezone(timedelta(hours=-3))
+    now = datetime.now(fuso_br)
+
+    # Define o período do mês corrente (MM/AAAA) para usar como filtro nativo se necessário
+    mes_ano_atual = now.strftime("%m/%Y")
+
+    # Parâmetros simplificados e robustos baseados na URL do Git
     params = {
-        "d": "1",
+        "d": "22",
         "s": "0",
-        "l": str(limit),
-        "cnpjFundo": cnpj_limpo,
-        "tipoFundo": "1"
+        "l": "30",
+        "tipoFundo": "1",  # FII
+        "situacao": "A",  # Ativo
+        "cnpj": cnpj_limpo,  # Usando 'cnpj' em vez de 'cnpjFundo' conforme o Git de sucesso
     }
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Referer": f"{FNET_SESSION_URL}?cnpjFundo={cnpj_limpo}",
-        "X-Requested-With": "XMLHttpRequest"
     }
 
-    # Termos-chave de interesse para a nossa planilha
-    TIPOS_PERMITIDOS = [
-        "relatorio gerencial",
-        "relatório gerencial",
-        "informe mensal estruturado",
-        "informe mensal",
-        "rendimentos e amortizacoes",
-        "rendimentos e amortizações"
-    ]
-
-    max_tentativas = 3
-    events = []
-
-    for tentativa in range(1, max_tentativas + 1):
-        try:
-            # Passo 1: Inicialização de sessão com cookies na B3
-            session_headers = {"User-Agent": headers["User-Agent"]}
-            session_params = {"cnpjFundo": cnpj_limpo}
-            session_resp = await client.get(
-                FNET_SESSION_URL,
-                params=session_params,
-                headers=session_headers,
-                timeout=8.0
-            )
-
-            if session_resp.status_code != 200:
-                raise httpx.HTTPStatusError("Falha no handshake", request=session_resp.request, response=session_resp)
-
-            # Passo 2: Consome a API de dados
-            response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=10.0)
-
-            if response.status_code == 200:
-                data = response.json()
-                raw_docs = data.get("data", []) or []
-
-                try:
-                    fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
-                    now = datetime.now(fuso_br)
-                except Exception:
-                    now = datetime.now()
-
-                mes_atual = now.month
-                ano_atual = now.year
-
-                for doc in raw_docs:
-                    # Capturamos todos os campos descritivos possíveis retornados no JSON da B3
-                    categoria = (doc.get("categoriaDocumento") or "").strip()
-                    tipo = (doc.get("tipoDocumento") or "").strip()
-                    especie = (doc.get("especieDocumento") or "").strip()
-                    descricao_modalidade = (doc.get("descricaoModalidade") or "").strip()
-                    assunto = (doc.get("assunto") or "").strip()
-
-                    # Criamos um bloco de texto unificado para busca de palavras-chave
-                    texto_busca = f"{categoria} {tipo} {especie} {descricao_modalidade} {assunto}".lower()
-
-                    # 🔍 FILTRO ROBUSTO: Se o bloco de informações não contiver nenhuma das nossas palavras-chave, ignora.
-                    if not any(termo in texto_busca for termo in TIPOS_PERMITIDOS):
-                        continue
-
-                    # Captura e tratamento seguro de data de publicação/entrega
-                    data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
-                    if not data_envio_str:
-                        continue
-
-                    try:
-                        dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
-                    except ValueError:
-                        continue
-
-                    # Filtro de mês corrente (Se ativo na chamada do Sheets)
-                    if current_month_only:
-                        if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
-                            continue
-
-                    # Montagem da nomenclatura final limpa do tipo de documento para a planilha
-                    if tipo:
-                        tipo_doc_final = f"{categoria} - {tipo}" if categoria and categoria != tipo else tipo
-                    else:
-                        tipo_doc_final = categoria or assunto or "Documento Geral"
-
-                    doc_id = doc.get("id")
-                    pdf_link = f"https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id={doc_id}" if doc_id else ""
-
-                    events.append({
-                        "ticker": ticker,
-                        "cnpj": cnpj_limpo,
-                        "data_envio": data_envio_str,
-                        "tipo_documento": tipo_doc_final,
-                        "assunto": assunto or "N/A",
-                        "link": pdf_link
-                    })
-
-                return events
-            else:
-                raise httpx.HTTPStatusError("Erro de resposta dos dados", request=response.request, response=response)
-
-        except Exception as e:
-            if tentativa == max_tentativas:
-                print(f"Erro definitivo ao buscar FNET para {ticker} após {max_tentativas} tentativas: {e}")
-            await asyncio.sleep(0.5 * tentativa)
-
-    return events
-
-
-@router.post("/calendar", tags=["Calendário de Eventos (FNET)"])
-async def get_calendar_events(payload: CalendarRequest):
-    if not payload.fundos:
-        raise HTTPException(status_code=400, detail="A lista de fundos não pode estar vazia.")
+    TIPOS_PERMITIDOS = ["relatorio gerencial", "relatório gerencial", "informe mensal", "informe mensal estruturado"]
+    max_tentativas = 2
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        tasks = [
-            fetch_fundo_events(client, f["ticker"], f["cnpj"], payload.current_month_only)
-            for f in payload.fundos if f.get("cnpj")
-        ]
-        results = await asyncio.gather(*tasks)
+        for tentativa in range(1, max_tentativas + 1):
+            try:
+                # Faz a chamada HTTP direta para a API de dados (sem necessidade de handshake prévio no HTTP do FNET!)
+                response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=12.0)
 
-    all_events = []
-    for f_events in results:
-        all_events.extend(f_events)
+                if response.status_code == 200:
+                    raw_data = response.json()
+                    raw_docs = raw_data.get("data", []) or []
 
-    def parse_date(event):
-        try:
-            return datetime.strptime(event["data_envio"], "%d/%m/%Y %H:%M")
-        except ValueError:
-            return datetime.min
+                    filtered_docs = []
+                    for doc in raw_docs:
+                        categoria = (doc.get("categoriaDocumento") or "").strip()
+                        tipo = (doc.get("tipoDocumento") or "").strip()
+                        especie = (doc.get("especieDocumento") or "").strip()
+                        assunto = (doc.get("assunto") or "").strip()
+                        descricao_modalidade = (doc.get("descricaoModalidade") or "").strip()
 
-    all_events.sort(key=parse_date, reverse=True)
+                        # Cria bloco de busca de texto
+                        texto_busca = f"{categoria} {tipo} {especie} {descricao_modalidade} {assunto}".lower()
 
-    return all_events
+                        if not any(termo in texto_busca for termo in TIPOS_PERMITIDOS):
+                            continue
+
+                        data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
+                        if not data_envio_str:
+                            continue
+
+                        try:
+                            dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
+                        except ValueError:
+                            continue
+
+                        # Filtra apenas registros do mês e ano correntes
+                        if dt_envio.month != now.month or dt_envio.year != now.year:
+                            continue
+
+                        filtered_docs.append({
+                            "id_documento": doc.get("id"),
+                            "data_envio": data_envio_str,
+                            "categoria": categoria,
+                            "tipo": tipo or "N/A",
+                            "assunto": assunto or "N/A"
+                        })
+
+                    return {
+                        "status_code_fnet": response.status_code,
+                        "cnpj_pesquisado": cnpj_limpo,
+                        "tentativa": tentativa,
+                        "total_recebido_da_b3": len(raw_docs),
+                        "total_filtrado_mes_corrente": len(filtered_docs),
+                        "documentos": filtered_docs,
+                        "dados_originais_b3_primeiro_item": raw_docs[0] if raw_docs else {}
+                    }
+                else:
+                    raise httpx.HTTPStatusError(f"HTTP {response.status_code}", request=response.request,
+                                                response=response)
+
+            except Exception as e:
+                if tentativa == max_tentativas:
+                    return JSONResponse(
+                        status_code=502,
+                        content={
+                            "erro": f"Falha ao conectar na API da B3 via HTTP após {max_tentativas} tentativas.",
+                            "detalhe": str(e)
+                        }
+                    )
+                await asyncio.sleep(0.5)
