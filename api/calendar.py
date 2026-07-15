@@ -4,33 +4,31 @@ from typing import List, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
+import zoneinfo  # Para garantir o fuso horário do Brasil
 
 router = APIRouter()
 
-# URL oficial do serviço de consulta de documentos do FNET da B3
 FNET_API_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
 
 
-# Modelo de dados que a API espera receber do Google Sheets
 class CalendarRequest(BaseModel):
     fundos: List[Dict[str, str]]
-    current_month_only: Optional[bool] = True  # Flag para ativar/desativar o filtro do mês atual
+    current_month_only: Optional[bool] = True
 
 
-# Função auxiliar para buscar documentos e filtrar por data
 async def fetch_fundo_events(
         client: httpx.AsyncClient,
         ticker: str,
         cnpj: str,
         current_month_only: bool,
-        limit: int = 15  # Aumentamos o limite individual para garantir que pegamos todos do mês
+        limit: int = 20  # Aumentado para pegar uma margem histórica maior e não perder nada
 ) -> List[dict]:
     params = {
         "d_draw": "1",
         "d_start": "0",
         "d_length": str(limit),
         "cnpjFundo": cnpj,
-        "tipoFundo": "1"  # Tipo 1 = FII
+        "tipoFundo": "1"
     }
 
     headers = {
@@ -45,25 +43,33 @@ async def fetch_fundo_events(
         data = response.json()
         raw_docs = data.get("data", [])
 
-        # Obtém o mês e ano corrente baseado na data atual
-        now = datetime.now()
+        # 1. PEGA O MÊS E ANO DE SÃO PAULO (BRASIL) INDEPENDENTE DE ONDE A VERCEL ESTEJA HOSPEDADA
+        try:
+            fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
+            now = datetime.now(fuso_br)
+        except Exception:
+            now = datetime.now()  # Fallback seguro
+
         mes_atual = now.month
         ano_atual = now.year
 
         events = []
         for doc in raw_docs:
+            # Importante: O FNET usa o campo "dataEnvio" para a data de entrega que você viu no print
             data_envio_str = doc.get("dataEnvio", "")  # Formato: "DD/MM/AAAA HH:MM"
 
-            # Tenta converter a string de data para objeto datetime para podermos filtrar
+            if not data_envio_str:
+                continue
+
             try:
                 dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
             except ValueError:
-                continue  # Ignora se a data vier corrompida ou inválida
+                continue
 
-            # APLICA FILTRAGEM DO MÊS ATUAL se a flag estiver ativa
+            # 2. SE FILTRO ATIVO, VALIDA SE PERTENCE AO MÊS/ANO DE BRASÍLIA
             if current_month_only:
                 if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
-                    continue  # Pula este documento se não for do mês e ano correntes
+                    continue
 
             doc_id = doc.get("id")
             pdf_link = f"https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id={doc_id}" if doc_id else ""
@@ -88,14 +94,9 @@ async def fetch_fundo_events(
 
 @router.post("/calendar", tags=["Calendário de Eventos (FNET)"])
 async def get_calendar_events(payload: CalendarRequest):
-    """
-    Recebe os FIIs e retorna os comunicados oficiais.
-    Por padrão, filtra e traz APENAS os documentos do mês corrente.
-    """
     if not payload.fundos:
         raise HTTPException(status_code=400, detail="A lista de fundos não pode estar vazia.")
 
-    # Executa de forma assíncrona e paralela para performance brutal
     async with httpx.AsyncClient() as client:
         tasks = [
             fetch_fundo_events(client, f["ticker"], f["cnpj"], payload.current_month_only)
@@ -107,7 +108,6 @@ async def get_calendar_events(payload: CalendarRequest):
     for f_events in results:
         all_events.extend(f_events)
 
-    # Ordenação decrescente pela data de envio
     def parse_date(event):
         try:
             return datetime.strptime(event["data_envio"], "%d/%m/%Y %H:%M")
