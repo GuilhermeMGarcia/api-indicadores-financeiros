@@ -67,7 +67,7 @@ async def home():
                     <li><span class="tag">GET</span> <a href="/api/stock/PETR4">📈 Ações: Exemplo PETR4</a></li>
                     <li><span class="tag">GET</span> <a href="/api/fii/HGLG11">🏢 FIIs: Exemplo HGLG11</a></li>
                     <li><span class="tag">GET</span> <a href="/api/proxy/PETR4">🔗 Proxy Fundamentus: Ver HTML bruto de PETR4</a></li>
-                    <li><span class="tag">GET</span> <a href="/api/proxy_fnet/11728688000147">📅 Proxy FNET: Ver JSON bruto do HGLG1
+                    <li><span class="tag">GET</span> <a href="/api/proxy_fnet/11728688000147">📅 Proxy FNET: Ver JSON bruto do HGLG11</a></li>
                 </ul>
             </div>
 
