@@ -3,38 +3,37 @@ from fastapi.responses import HTMLResponse
 from api.proxy import router as proxy_router
 from api.fii import router as fii_router
 from api.stock import router as stock_router
-from api.calendar import router as calendar_router
+from api.calendar import router as calendar_router       # Importa o Calendário
+from api.proxy_fnet import router as proxy_fnet_router   # Importa o novo Proxy FNET
 
 # Configuração global da API
 app = FastAPI(
     title="🚀 Indicador API - Sistema de Inteligência Financeira",
     description="""
     API de captura e processamento de indicadores financeiros (Ações e FIIs).
-    Utiliza Web Scraping assíncrono para extração de dados do Fundamentus.
+    Utiliza Web Scraping assíncrono para extração de dados do Fundamentus e FNET.
     """,
-    version="1.1.0",
-    docs_url="/docs",  # URL da documentação Swagger
-    redoc_url="/redoc"  # URL da documentação ReDoc
+    version="1.2.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # --- INCLUSÃO DAS ROTAS (Módulos) ---
 
-# Rota de Proxy: Utilizada para debug e visualização do HTML bruto
+# Rotas de Proxy (Diagnósticos)
 app.include_router(proxy_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
+app.include_router(proxy_fnet_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"]) # Registra o Proxy FNET
 
-# Rotas de Dados: Entrega os indicadores mastigados para o Google Sheets
+# Rotas de Dados
 app.include_router(fii_router, prefix="/api", tags=["Fundos Imobiliários (FIIs)"])
 app.include_router(stock_router, prefix="/api", tags=["Ações (Stocks)"])
-
-# Rota de Calendário (FNET B3)
-app.include_router(calendar_router, prefix="/api")
+app.include_router(calendar_router, prefix="/api", tags=["Calendário de Eventos (FNET)"])       # Registra o Calendário
 
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
     """
-    Página inicial estilizada para facilitar o acesso rápido
-    aos testes e documentação durante o desenvolvimento.
+    Página inicial estilizada com atalhos de teste
     """
     return """
     <html>
@@ -67,7 +66,8 @@ async def home():
                 <ul>
                     <li><span class="tag">GET</span> <a href="/api/stock/PETR4">📈 Ações: Exemplo PETR4</a></li>
                     <li><span class="tag">GET</span> <a href="/api/fii/HGLG11">🏢 FIIs: Exemplo HGLG11</a></li>
-                    <li><span class="tag">GET</span> <a href="/api/proxy/PETR4">🔗 Proxy: Ver HTML bruto de PETR4</a></li>
+                    <li><span class="tag">GET</span> <a href="/api/proxy/PETR4">🔗 Proxy Fundamentus: Ver HTML bruto de PETR4</a></li>
+                    <li><span class="tag">GET</span> <a href="/api/proxy_fnet/11728688000147">📅 Proxy FNET: Ver JSON bruto do HGLG1
                 </ul>
             </div>
 
