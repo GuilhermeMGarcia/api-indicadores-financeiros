@@ -8,7 +8,6 @@ import zoneinfo
 
 router = APIRouter()
 
-# URLs oficiais de fluxo de dados do FNET da B3
 FNET_SESSION_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM"
 FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
 
@@ -23,22 +22,25 @@ async def fetch_fundo_events(
         ticker: str,
         cnpj: str,
         current_month_only: bool,
-        limit: int = 15
+        limit: int = 40  # Aumentamos o limite para garantir uma varredura profunda pré-filtro
 ) -> List[dict]:
     """
-    Busca de forma paralela os documentos de um FII aplicando o fluxo de handshake,
-    cookies e mecanismo de re-tentativa idêntico ao proxy validado.
+    Busca os documentos oficiais do FII no FNET (B3) ordenando do mais novo
+    para o mais antigo e filtrando apenas por Relatórios Gerenciais e Informes Mensais.
     """
-    # Remove formatações do CNPJ
     cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
 
-    # Parâmetros oficiais exigidos pela B3
+    # Parâmetros de ordenação e paginação oficiais da API DataTables do FNET
     params = {
-        "d": "0",  # draw
-        "s": "0",  # start
-        "l": str(limit),  # limit de documentos
+        "d": "1",  # d_draw
+        "s": "0",  # d_start
+        "l": str(limit),  # d_length
         "cnpjFundo": cnpj_limpo,
-        "tipoFundo": "1"
+        "tipoFundo": "1",  # 1 = FII
+
+        # 🔥 FORÇA A B3 A ORDENAR POR DATA DE ENTREGA (Coluna Índice 4) EM ORDEM DECRESCENTE (DESC)
+        "order[0][column]": "4",
+        "order[0][dir]": "desc"
     }
 
     headers = {
@@ -51,9 +53,16 @@ async def fetch_fundo_events(
     max_tentativas = 3
     events = []
 
+    # Lista de tipos de documentos permitidos (Filtro solicitado)
+    TIPOS_PERMITIDOS = [
+        "relatorio gerencial",
+        "informe mensal estruturado",
+        "informe mensal"
+    ]
+
     for tentativa in range(1, max_tentativas + 1):
         try:
-            # Passo 1: Realiza o Handshake para estabelecer a sessão do IP
+            # Passo 1: Handshake para abrir sessão na B3
             session_headers = {"User-Agent": headers["User-Agent"]}
             session_params = {"cnpjFundo": cnpj_limpo}
             session_response = await client.get(
@@ -70,14 +79,13 @@ async def fetch_fundo_events(
                     response=session_response
                 )
 
-            # Passo 2: Consome a API de dados utilizando a sessão estabelecida
+            # Passo 2: Consome os dados ordenados
             response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=10.0)
 
             if response.status_code == 200:
                 data = response.json()
                 raw_docs = data.get("data", []) or []
 
-                # Definição do fuso horário brasileiro para comparação
                 try:
                     fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
                     now = datetime.now(fuso_br)
@@ -88,19 +96,30 @@ async def fetch_fundo_events(
                 ano_atual = now.year
 
                 for doc in raw_docs:
-                    # No FNET, a data de publicação oficial que o usuário vê é 'dataEntrega'
-                    data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
+                    # Captura o tipo do documento e a categoria de forma segura
+                    tipo_doc_raw = doc.get("tipoDocumento", "").strip()
+                    categoria_raw = doc.get("categoriaDocumento", "").strip()
 
+                    # Combina para exibição estruturada
+                    tipo_doc_formatado = f"{categoria_raw} - {tipo_doc_raw}" if tipo_doc_raw and categoria_raw else (
+                                tipo_doc_raw or categoria_raw)
+
+                    # 1. 🔍 FILTRO DE TIPO: Verifica se o documento é um dos que nos interessam
+                    tipo_doc_lower = tipo_doc_raw.lower()
+                    if not any(t in tipo_doc_lower for t in TIPOS_PERMITIDOS):
+                        continue  # Ignora atas, convocações, regulamentos, etc.
+
+                    # Captura a data de entrega oficial
+                    data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
                     if not data_envio_str:
                         continue
 
                     try:
-                        # Faz a conversão para validar o período
                         dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
                     except ValueError:
                         continue
 
-                    # Filtra apenas o mês e ano do calendário atualizado
+                    # 2. 📅 FILTRO DE DATA (MÊS CORRENTE): Se ativo, verifica mês/ano
                     if current_month_only:
                         if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
                             continue
@@ -108,20 +127,16 @@ async def fetch_fundo_events(
                     doc_id = doc.get("id")
                     pdf_link = f"https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id={doc_id}" if doc_id else ""
 
-                    categoria = doc.get("categoriaDocumento", "").strip()
-                    sub_categoria = doc.get("subCategoriaDocumento", "").strip()
-                    tipo_doc = f"{categoria} - {sub_categoria}" if sub_categoria else categoria
-
                     events.append({
                         "ticker": ticker,
                         "cnpj": cnpj_limpo,
                         "data_envio": data_envio_str,
-                        "tipo_documento": tipo_doc,
+                        "tipo_documento": tipo_doc_formatado,
                         "assunto": doc.get("assunto", "").strip() or "N/A",
                         "link": pdf_link
                     })
 
-                # Se completou o processamento com sucesso (mesmo que retorne vazio por conta do mês), interrompe o loop de tentativas
+                # Se o processamento concluiu, interrompe as tentativas
                 return events
 
             else:
@@ -132,7 +147,6 @@ async def fetch_fundo_events(
                 )
 
         except Exception as e:
-            # Em caso de falhas de comunicação com a B3, aguarda um tempo progressivo e tenta de novo
             if tentativa == max_tentativas:
                 print(f"Erro definitivo ao buscar FNET para {ticker} após {max_tentativas} tentativas: {e}")
             await asyncio.sleep(0.5 * tentativa)
@@ -145,7 +159,6 @@ async def get_calendar_events(payload: CalendarRequest):
     if not payload.fundos:
         raise HTTPException(status_code=400, detail="A lista de fundos não pode estar vazia.")
 
-    # Gerenciamento dinâmico e paralelo das requisições assíncronas de todos os ativos
     async with httpx.AsyncClient(follow_redirects=True) as client:
         tasks = [
             fetch_fundo_events(client, f["ticker"], f["cnpj"], payload.current_month_only)
@@ -163,7 +176,6 @@ async def get_calendar_events(payload: CalendarRequest):
         except ValueError:
             return datetime.min
 
-    # Ordenação dos eventos consolidados de todos os FIIs por data decrescente
     all_events.sort(key=parse_date, reverse=True)
 
     return all_events
