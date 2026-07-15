@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from api.proxy import router as proxy_router
 from api.fii import router as fii_router
 from api.stock import router as stock_router
+from api.calendar import router as calendar_router
 
 # Configuração global da API
 app = FastAPI(
@@ -24,6 +25,9 @@ app.include_router(proxy_router, prefix="/api", tags=["Ferramentas de Diagnósti
 # Rotas de Dados: Entrega os indicadores mastigados para o Google Sheets
 app.include_router(fii_router, prefix="/api", tags=["Fundos Imobiliários (FIIs)"])
 app.include_router(stock_router, prefix="/api", tags=["Ações (Stocks)"])
+
+# Rota de Calendário (FNET B3)
+app.include_router(calendar_router, prefix="/api")
 
 
 @app.get("/", response_class=HTMLResponse)
