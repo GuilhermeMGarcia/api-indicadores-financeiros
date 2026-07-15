@@ -18,8 +18,8 @@ async def debug_fnet_raw(cnpj: str):
         "l": "30",  # Puxa os últimos 30 documentos para análise ampla de testes
         "cnpjFundo": cnpj_limpo,
         "tipoFundo": "1",
-        "order[0][column]": "4",
-        "order[0][dir]": "asc"
+        "order[0][column]": "7",
+        "order[0][dir]": "desc"
     }
 
     headers = {
