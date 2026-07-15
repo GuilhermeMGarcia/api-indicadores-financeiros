@@ -10,24 +10,24 @@ FNET_SESSION_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciador
 FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
 
 
-async def buscar_com_retry(client, cnpj_limpo, headers, params, max_tentativas=3):
-    """Executa a chamada com estratégia de retry."""
+async def buscar_dados_com_retry(client, cnpj_limpo, headers, params, max_tentativas=3):
+    """Executa a chamada ao FNET com re-tentativa automática."""
     for tentativa in range(max_tentativas):
         try:
-            # Garante o handshake antes de cada requisição principal para renovar o cookie
+            # Renovação da sessão
             await client.get(FNET_SESSION_URL, params={"cnpjFundo": cnpj_limpo}, headers=headers, timeout=5.0)
-
+            # Requisição dos dados
             response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=8.0)
 
             if response.status_code == 200:
                 return response.json()
         except Exception:
             if tentativa == max_tentativas - 1: raise
-            await asyncio.sleep(1 * (tentativa + 1))  # Aumenta o tempo de espera (1s, 2s...)
+            await asyncio.sleep(1)
     return None
 
 
-@router.get("/proxy_fnet/{cnpj}", tags=["Ferramentas de Diagnóstico (Proxy)"])
+@router.get("/proxy_fnet/{cnpj}")
 async def debug_fnet_raw(cnpj: str):
     cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
 
@@ -41,17 +41,44 @@ async def debug_fnet_raw(cnpj: str):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
-        raw_data = await buscar_com_retry(client, cnpj_limpo, headers, params)
+        raw_data = await buscar_dados_com_retry(client, cnpj_limpo, headers, params)
 
     if not raw_data:
-        return {"erro": "Falha após múltiplas tentativas"}
+        return {"status": "error", "mensagem": "Falha na conexão com a B3"}
 
-    # Filtro lógico mantido
+    # Processamento e Filtro Robusto
     hoje = datetime.now()
-    docs = [d for d in raw_data.get("data", []) if
-            datetime.strptime(d.get("dataEntrega", "01/01/2000 00:00"), "%d/%m/%Y %H:%M").month == hoje.month and
-            (d.get("tipoDocumento") == "Relatório Gerencial" or d.get(
-                "tipoDocumento") == "Informe Mensal Estruturado" or (
-                         d.get("tipoDocumento") == "Informe Mensal" and d.get("arquivoEstruturado") == "S"))]
+    documentos_filtrados = []
 
-    return {"status": "success", "total_filtrado": len(docs), "documentos": docs}
+    for doc in raw_data.get("data", []):
+        data_str = doc.get("dataEntrega", "")
+
+        # Tenta formatar a data de forma inteligente
+        dt_envio = None
+        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y"]:
+            try:
+                dt_envio = datetime.strptime(data_str, fmt)
+                break
+            except ValueError:
+                continue
+
+        if not dt_envio: continue
+
+        # Filtra pelo mês/ano e tipos de documentos
+        eh_mes_atual = (dt_envio.month == hoje.month and dt_envio.year == hoje.year)
+        tipo = doc.get("tipoDocumento", "")
+
+        eh_valido = (
+                tipo == "Relatório Gerencial" or
+                tipo == "Informe Mensal Estruturado" or
+                (tipo == "Informe Mensal" and doc.get("arquivoEstruturado") == "S")
+        )
+
+        if eh_mes_atual and eh_valido:
+            documentos_filtrados.append(doc)
+
+    return {
+        "status": "success",
+        "total_filtrado": len(documentos_filtrados),
+        "documentos": documentos_filtrados
+    }
