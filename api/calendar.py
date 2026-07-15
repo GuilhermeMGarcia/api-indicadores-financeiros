@@ -18,7 +18,7 @@ async def fetch_fundo_events_via_proxy(client: httpx.AsyncClient, ticker: str, c
     Ele apenas consulta o nosso Proxy robusto que criamos.
     """
     # A URL aponta para o seu próprio endpoint que já está blindado
-    proxy_url = f"http://localhost:8000/api/proxy_fnet/{cnpj}"
+    proxy_url = f"https://api-indicadores-financeiros.vercel.app/api/proxy_fnet/{cnpj}"
 
     try:
         response = await client.get(proxy_url, timeout=15.0)
