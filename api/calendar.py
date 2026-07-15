@@ -104,6 +104,7 @@ async def get_calendar_events(payload: CalendarRequest):
         ]
         results = await asyncio.gather(*tasks)
 
+
     all_events = []
     for f_events in results:
         all_events.extend(f_events)
