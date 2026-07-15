@@ -19,7 +19,7 @@ async def debug_fnet_raw(cnpj: str):
         "cnpjFundo": cnpj_limpo,
         "tipoFundo": "1",
         "order[0][column]": "4",
-        "order[0][dir]": "desc"
+        "order[0][dir]": "asc"
     }
 
     headers = {
