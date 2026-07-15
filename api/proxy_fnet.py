@@ -14,28 +14,13 @@ FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciado
 async def debug_fnet_raw(cnpj: str):
     cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
 
-    # 1. PEGA A DATA DE HOJE E DEFINE O PRIMEIRO DIA DO MÊS CORRENTE (FUSO SÃO PAULO)
-    try:
-        fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
-        now = datetime.now(fuso_br)
-    except Exception:
-        now = datetime.now()
-
-    # Formata as datas no padrão que a B3 (FNET) exige: DD/MM/AAAA
-    data_inicial = f"01/{now.strftime('%m/%Y')}"   # Ex: 01/07/2026
-    data_final = now.strftime("%d/%m/%Y")          # Ex: 15/07/2026
-
-    # Parâmetros oficiais com o novo filtro por data
+    # Parâmetros simples e diretos para não confundir a rota da B3
     params = {
-        "d": "1",
-        "s": "0",
-        "l": "30",  # Limite máximo de amostragem no teste
+        "d_draw": "1",
+        "d_start": "0",
+        "d_length": "100",  # Trazemos uma quantidade maior para garantir que o mês atual esteja no meio
         "cnpjFundo": cnpj_limpo,
-        "tipoFundo": "1",
-        "dataInicial": data_inicial,  # Filtro nativo do FNET
-        "dataFinal": data_final,      # Filtro nativo do FNET
-        "order[0][column]": "4",
-        "order[0][dir]": "desc"
+        "tipoFundo": "1"
     }
 
     headers = {
@@ -48,6 +33,16 @@ async def debug_fnet_raw(cnpj: str):
     TIPOS_PERMITIDOS = ["relatorio gerencial", "informe mensal estruturado", "informe mensal"]
     max_tentativas = 3
 
+    # Define o fuso horário correto do Brasil
+    try:
+        fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
+        now = datetime.now(fuso_br)
+    except Exception:
+        now = datetime.now()
+
+    mes_atual = now.month
+    ano_atual = now.year
+
     async with httpx.AsyncClient(follow_redirects=True) as client:
         for tentativa in range(1, max_tentativas + 1):
             try:
@@ -56,32 +51,61 @@ async def debug_fnet_raw(cnpj: str):
                 session_params = {"cnpjFundo": cnpj_limpo}
                 await client.get(FNET_SESSION_URL, params=session_params, headers=session_headers, timeout=8.0)
 
-                # Passo 2: Busca os dados já filtrados por data pela B3
-                response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=10.0)
+                # Passo 2: Consome os dados brutos
+                response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=12.0)
 
                 if response.status_code == 200:
                     raw_data = response.json()
                     raw_docs = raw_data.get("data", []) or []
 
-                    # Filtramos o retorno no proxy para ver apenas os tipos de interesse
+                    # 1. Filtramos e limpamos os dados no Python
                     filtered_docs = []
                     for doc in raw_docs:
                         tipo = (doc.get("tipoDocumento") or "").strip()
-                        if any(t in tipo.lower() for t in TIPOS_PERMITIDOS):
-                            filtered_docs.append({
-                                "dataEntrega": doc.get("dataEntrega"),
-                                "categoria": doc.get("categoriaDocumento"),
-                                "tipo": tipo,
-                                "assunto": doc.get("assunto"),
-                                "id": doc.get("id")
-                            })
+                        categoria = (doc.get("categoriaDocumento") or "").strip()
+                        tipo_doc_formatado = f"{categoria} - {tipo}" if tipo and categoria else (tipo or categoria)
+
+                        # Filtro por tipo
+                        if not any(t in tipo.lower() for t in TIPOS_PERMITIDOS):
+                            continue
+
+                        # Captura e validação da data
+                        data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
+                        if not data_envio_str:
+                            continue
+
+                        try:
+                            dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
+                        except ValueError:
+                            continue
+
+                        # Filtro pelo mês atual
+                        if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
+                            continue
+
+                        filtered_docs.append({
+                            "data_envio": data_envio_str,
+                            "dt_object": dt_envio, # temporário para ordenação
+                            "tipo_documento": tipo_doc_formatado,
+                            "assunto": doc.get("assunto", "").strip() or "N/A",
+                            "id": doc.get("id")
+                        })
+
+                    # 2. Ordena os documentos filtrados do mais novo para o mais antigo
+                    filtered_docs.sort(key=lambda x: x["dt_object"], reverse=True)
+
+                    # Remove o objeto datetime temporário antes de responder
+                    for doc in filtered_docs:
+                        doc.pop("dt_object", None)
 
                     return {
                         "status_code_fnet": response.status_code,
                         "cnpj_pesquisado": cnpj_limpo,
-                        "intervalo_pesquisado": f"{data_inicial} ate {data_final}",
-                        "total_documentos_encontrados_b3": len(raw_docs),
-                        "documentos_filtrados_por_tipo": filtered_docs
+                        "tentativa": tentativa,
+                        "mes_referencia_pesquisado": f"{mes_atual}/{ano_atual}",
+                        "total_bruto_recebido_da_b3": len(raw_docs),
+                        "total_filtrado": len(filtered_docs),
+                        "documentos": filtered_docs
                     }
                 else:
                     raise httpx.HTTPStatusError(f"HTTP {response.status_code}", request=response.request, response=response)
