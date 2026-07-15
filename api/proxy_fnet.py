@@ -17,7 +17,7 @@ async def debug_fnet_raw(cnpj: str):
         "d": "1",
         "s": "0",
         "l": "20",               # Traz apenas os últimos 15 documentos
-        #"tipoFundo": "1",        # 1 = FII
+        "tipoFundo": "7",        # 1 = FII
         "cnpjFundo": cnpj_limpo  # O CNPJ do fundo
     }
 
