@@ -1,4 +1,5 @@
 import httpx
+import time
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -16,10 +17,15 @@ async def debug_fnet_raw(cnpj: str):
     params = {
         "d": "1",
         "s": "0",
-        "l": "20",               # Traz apenas os últimos 15 documentos
-        "tipoFundo": "7",        # 1 = FII
-        "cnpjFundo": cnpj_limpo  # O CNPJ do fundo
+        "l": "10",
+        "o[0][dataReferencia]": "desc",
+        "idCategoriaDocumento": "0",
+        "idTipoDocumento": "0",
+        "idEspecieDocumento": "0",
+        "isSession": "true",
+        "_": str(int(time.time() * 1000)),
     }
+
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
