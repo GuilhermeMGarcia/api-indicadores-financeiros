@@ -4,11 +4,13 @@ from typing import List, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
-import zoneinfo  # Para garantir o fuso horário do Brasil
+import zoneinfo
 
 router = APIRouter()
 
-FNET_API_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
+# URLs oficiais de fluxo de dados do FNET da B3
+FNET_SESSION_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM"
+FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
 
 
 class CalendarRequest(BaseModel):
@@ -21,75 +23,121 @@ async def fetch_fundo_events(
         ticker: str,
         cnpj: str,
         current_month_only: bool,
-        limit: int = 20  # Aumentado para pegar uma margem histórica maior e não perder nada
+        limit: int = 15
 ) -> List[dict]:
+    """
+    Busca de forma paralela os documentos de um FII aplicando o fluxo de handshake,
+    cookies e mecanismo de re-tentativa idêntico ao proxy validado.
+    """
+    # Remove formatações do CNPJ
+    cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
+
+    # Parâmetros oficiais exigidos pela B3
     params = {
-        "d_draw": "1",
-        "d_start": "0",
-        "d_length": str(limit),
-        "cnpjFundo": cnpj,
+        "d": "0",  # draw
+        "s": "0",  # start
+        "l": str(limit),  # limit de documentos
+        "cnpjFundo": cnpj_limpo,
         "tipoFundo": "1"
     }
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Referer": f"{FNET_SESSION_URL}?cnpjFundo={cnpj_limpo}",
+        "X-Requested-With": "XMLHttpRequest"
     }
 
-    try:
-        response = await client.get(FNET_API_URL, params=params, headers=headers, timeout=10.0)
-        if response.status_code != 200:
-            return []
+    max_tentativas = 3
+    events = []
 
-        data = response.json()
-        raw_docs = data.get("data", [])
-
-        # 1. PEGA O MÊS E ANO DE SÃO PAULO (BRASIL) INDEPENDENTE DE ONDE A VERCEL ESTEJA HOSPEDADA
+    for tentativa in range(1, max_tentativas + 1):
         try:
-            fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
-            now = datetime.now(fuso_br)
-        except Exception:
-            now = datetime.now()  # Fallback seguro
+            # Passo 1: Realiza o Handshake para estabelecer a sessão do IP
+            session_headers = {"User-Agent": headers["User-Agent"]}
+            session_params = {"cnpjFundo": cnpj_limpo}
+            session_response = await client.get(
+                FNET_SESSION_URL,
+                params=session_params,
+                headers=session_headers,
+                timeout=8.0
+            )
 
-        mes_atual = now.month
-        ano_atual = now.year
+            if session_response.status_code != 200:
+                raise httpx.HTTPStatusError(
+                    f"Erro no handshake inicial (HTTP {session_response.status_code})",
+                    request=session_response.request,
+                    response=session_response
+                )
 
-        events = []
-        for doc in raw_docs:
-            # Importante: O FNET usa o campo "dataEnvio" para a data de entrega que você viu no print
-            data_envio_str = doc.get("dataEnvio", "")  # Formato: "DD/MM/AAAA HH:MM"
+            # Passo 2: Consome a API de dados utilizando a sessão estabelecida
+            response = await client.get(FNET_DATA_URL, params=params, headers=headers, timeout=10.0)
 
-            if not data_envio_str:
-                continue
+            if response.status_code == 200:
+                data = response.json()
+                raw_docs = data.get("data", []) or []
 
-            try:
-                dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
-            except ValueError:
-                continue
+                # Definição do fuso horário brasileiro para comparação
+                try:
+                    fuso_br = zoneinfo.ZoneInfo("America/Sao_Paulo")
+                    now = datetime.now(fuso_br)
+                except Exception:
+                    now = datetime.now()
 
-            # 2. SE FILTRO ATIVO, VALIDA SE PERTENCE AO MÊS/ANO DE BRASÍLIA
-            if current_month_only:
-                if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
-                    continue
+                mes_atual = now.month
+                ano_atual = now.year
 
-            doc_id = doc.get("id")
-            pdf_link = f"https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id={doc_id}" if doc_id else ""
+                for doc in raw_docs:
+                    # No FNET, a data de publicação oficial que o usuário vê é 'dataEntrega'
+                    data_envio_str = doc.get("dataEntrega") or doc.get("dataEnvio") or ""
 
-            categoria = doc.get("categoriaDocumento", "").strip()
-            sub_categoria = doc.get("subCategoriaDocumento", "").strip()
-            tipo_doc = f"{categoria} - {sub_categoria}" if sub_categoria else categoria
+                    if not data_envio_str:
+                        continue
 
-            events.append({
-                "ticker": ticker,
-                "cnpj": cnpj,
-                "data_envio": data_envio_str,
-                "tipo_documento": tipo_doc,
-                "assunto": doc.get("assunto", "").strip() or "N/A",
-                "link": pdf_link
-            })
-        return events
-    except Exception as e:
-        print(f"Erro ao buscar FNET para {ticker}: {e}")
-        return []
+                    try:
+                        # Faz a conversão para validar o período
+                        dt_envio = datetime.strptime(data_envio_str, "%d/%m/%Y %H:%M")
+                    except ValueError:
+                        continue
+
+                    # Filtra apenas o mês e ano do calendário atualizado
+                    if current_month_only:
+                        if dt_envio.month != mes_atual or dt_envio.year != ano_atual:
+                            continue
+
+                    doc_id = doc.get("id")
+                    pdf_link = f"https://fnet.bmfbovespa.com.br/fnet/publico/exibirDocumento?id={doc_id}" if doc_id else ""
+
+                    categoria = doc.get("categoriaDocumento", "").strip()
+                    sub_categoria = doc.get("subCategoriaDocumento", "").strip()
+                    tipo_doc = f"{categoria} - {sub_categoria}" if sub_categoria else categoria
+
+                    events.append({
+                        "ticker": ticker,
+                        "cnpj": cnpj_limpo,
+                        "data_envio": data_envio_str,
+                        "tipo_documento": tipo_doc,
+                        "assunto": doc.get("assunto", "").strip() or "N/A",
+                        "link": pdf_link
+                    })
+
+                # Se completou o processamento com sucesso (mesmo que retorne vazio por conta do mês), interrompe o loop de tentativas
+                return events
+
+            else:
+                raise httpx.HTTPStatusError(
+                    f"Erro de dados (HTTP {response.status_code})",
+                    request=response.request,
+                    response=response
+                )
+
+        except Exception as e:
+            # Em caso de falhas de comunicação com a B3, aguarda um tempo progressivo e tenta de novo
+            if tentativa == max_tentativas:
+                print(f"Erro definitivo ao buscar FNET para {ticker} após {max_tentativas} tentativas: {e}")
+            await asyncio.sleep(0.5 * tentativa)
+
+    return events
 
 
 @router.post("/calendar", tags=["Calendário de Eventos (FNET)"])
@@ -97,13 +145,13 @@ async def get_calendar_events(payload: CalendarRequest):
     if not payload.fundos:
         raise HTTPException(status_code=400, detail="A lista de fundos não pode estar vazia.")
 
-    async with httpx.AsyncClient() as client:
+    # Gerenciamento dinâmico e paralelo das requisições assíncronas de todos os ativos
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         tasks = [
             fetch_fundo_events(client, f["ticker"], f["cnpj"], payload.current_month_only)
             for f in payload.fundos if f.get("cnpj")
         ]
         results = await asyncio.gather(*tasks)
-
 
     all_events = []
     for f_events in results:
@@ -115,6 +163,7 @@ async def get_calendar_events(payload: CalendarRequest):
         except ValueError:
             return datetime.min
 
+    # Ordenação dos eventos consolidados de todos os FIIs por data decrescente
     all_events.sort(key=parse_date, reverse=True)
 
     return all_events
