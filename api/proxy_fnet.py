@@ -68,11 +68,24 @@ async def debug_fnet_raw(cnpj: str):
         eh_mes_atual = (dt_envio.month == hoje.month and dt_envio.year == hoje.year)
         tipo = doc.get("tipoDocumento", "")
 
-        eh_valido = (
-                tipo == "Relatório Gerencial" or
-                tipo == "Informe Mensal Estruturado" or
-                (tipo == "Informe Mensal" and doc.get("arquivoEstruturado") == "S")
-        )
+        # 1. Limpa o nome do tipo removendo espaços extras
+        tipo_limpo = tipo.strip()
+
+        # 2. Define a lista de documentos que você QUER capturar
+        # Adicionei Informe Trimestral e outros que apareceram no seu log
+        tipos_desejados = [
+            "Relatório Gerencial",
+            "Informe Mensal Estruturado",
+            "Informe Mensal",
+            "Informe Trimestral Estruturado"
+        ]
+
+        # 3. Validação simplificada:
+        # Verifica se o tipo limpo está na lista permitida
+        eh_valido = tipo_limpo in tipos_desejados
+
+        # Adicione isso no seu loop para ver no log da Vercel (Logs > Deployments)
+        # print(f"DEBUG: {doc.get('ticker', 'N/A')} | Tipo: {tipo} | ArqEstruturado: '{doc.get('arquivoEstruturado')}'")
 
         if eh_mes_atual and eh_valido:
             documentos_filtrados.append(doc)
