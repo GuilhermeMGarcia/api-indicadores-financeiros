@@ -1,12 +1,20 @@
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
+from api.Cache import TTLCache
 
 # Cabeçalhos globais para simular um navegador real
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.fundamentus.com.br/"
 }
+
+# Cache do HTML do Fundamentus por ticker, por 30 minutos.
+# Reduz chamadas repetidas ao Fundamentus (evita risco de bloqueio) e
+# diminui o tempo de execução da função na Vercel.
+FUNDAMENTUS_CACHE_TTL_SECONDS = 30 * 60  # 30 minutos
+fundamentus_cache = TTLCache(ttl_seconds=FUNDAMENTUS_CACHE_TTL_SECONDS)
+
 
 def is_empty(value: str | None) -> bool:
     """Verifica se o valor retornado pelo site é nulo ou vazio."""
@@ -32,14 +40,24 @@ def parse_int(value: str):
     return int(value.replace(".", "").replace(",", "").strip())
 
 async def get_fundamentus_html(ticker: str) -> BeautifulSoup:
-    """Busca o HTML diretamente do Fundamentus de forma assíncrona."""
-    url = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker.upper()}"
+    """
+    Busca o HTML do Fundamentus, usando cache de 30 minutos por ticker
+    para reduzir scraping repetido.
+    """
+    ticker = ticker.upper()
+
+    cached_content = fundamentus_cache.get(ticker)
+    if cached_content is not None:
+        return BeautifulSoup(cached_content, "html.parser")
+
+    url = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker}"
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
             resp = await client.get(url, headers=HEADERS)
             resp.raise_for_status()
             # Fundamentus usa codificação ISO-8859-1 para acentos
             content = resp.content.decode("ISO-8859-1")
+            fundamentus_cache.set(ticker, content)
             return BeautifulSoup(content, "html.parser")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao acessar Fundamentus: {str(e)}")
