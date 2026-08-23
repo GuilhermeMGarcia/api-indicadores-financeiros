@@ -3,11 +3,18 @@ import httpx
 import asyncio
 from datetime import datetime
 from fastapi import APIRouter
+from api.Cache import TTLCache
 
 router = APIRouter()
 
 FNET_SESSION_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM"
 FNET_DATA_URL = "https://fnet.bmfbovespa.com.br/fnet/publico/pesquisarGerenciadorDocumentosDados"
+
+# Cache do resultado já filtrado, por CNPJ, por 30 minutos.
+# Como o calendar.py consome este mesmo endpoint via HTTP, ele é
+# beneficiado automaticamente — não precisa de cache próprio.
+FNET_CACHE_TTL_SECONDS = 30 * 60  # 30 minutos
+fnet_cache = TTLCache(ttl_seconds=FNET_CACHE_TTL_SECONDS)
 
 
 async def buscar_dados_com_retry(client, cnpj_limpo, headers, params, max_tentativas=3):
@@ -31,6 +38,10 @@ async def buscar_dados_com_retry(client, cnpj_limpo, headers, params, max_tentat
 async def debug_fnet_raw(cnpj: str):
     cnpj_limpo = cnpj.replace(".", "").replace("-", "").replace("/", "").strip()
 
+    cached_result = fnet_cache.get(cnpj_limpo)
+    if cached_result is not None:
+        return cached_result
+
     params = {
         "d": "1", "s": "0", "l": "30",
         "cnpjFundo": cnpj_limpo,
@@ -44,6 +55,7 @@ async def debug_fnet_raw(cnpj: str):
         raw_data = await buscar_dados_com_retry(client, cnpj_limpo, headers, params)
 
     if not raw_data:
+        # Erro não é cacheado, para permitir nova tentativa na próxima chamada
         return {"status": "error", "mensagem": "Falha na conexão com a B3"}
 
     # Processamento e Filtro Robusto
@@ -90,8 +102,12 @@ async def debug_fnet_raw(cnpj: str):
         if eh_mes_atual and eh_valido:
             documentos_filtrados.append(doc)
 
-    return {
+    resultado = {
         "status": "success",
         "total_filtrado": len(documentos_filtrados),
         "documentos": documentos_filtrados
     }
+
+    fnet_cache.set(cnpj_limpo, resultado)
+
+    return resultado
