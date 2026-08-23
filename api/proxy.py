@@ -2,8 +2,15 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import Response, JSONResponse
 from api.utils import HEADERS  # Importa os headers padronizados
+from api.Cache import TTLCache
 
 router = APIRouter()
+
+# Cache do HTML bruto por ticker, por 30 minutos — mesma janela usada
+# em utils.py, para manter a mesma política de proteção contra bloqueio
+# do Fundamentus em toda a API.
+PROXY_CACHE_TTL_SECONDS = 30 * 60  # 30 minutos
+proxy_cache = TTLCache(ttl_seconds=PROXY_CACHE_TTL_SECONDS)
 
 
 @router.get("/proxy/{ticker}")
@@ -12,7 +19,17 @@ async def proxy_request(ticker: str):
     Rota de diagnóstico: Retorna o HTML bruto do Fundamentus para inspeção.
     Útil para verificar se o site mudou a estrutura das tabelas.
     """
-    url = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker.upper()}"
+    ticker = ticker.upper()
+
+    cached_content = proxy_cache.get(ticker)
+    if cached_content is not None:
+        return Response(
+            content=cached_content,
+            media_type="text/html",
+            headers={"X-Proxy-Source": "Fundamentus-Scraper", "X-Cache": "HIT"}
+        )
+
+    url = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker}"
 
     try:
         # Usamos o AsyncClient para não travar a API enquanto espera o site externo
@@ -26,10 +43,12 @@ async def proxy_request(ticker: str):
             # Isso garante que você veja os acentos corretamente no navegador
             content = resp.content.decode("ISO-8859-1")
 
+            proxy_cache.set(ticker, content)
+
             return Response(
                 content=content,
                 media_type="text/html",
-                headers={"X-Proxy-Source": "Fundamentus-Scraper"}
+                headers={"X-Proxy-Source": "Fundamentus-Scraper", "X-Cache": "MISS"}
             )
 
     except httpx.HTTPStatusError as e:
