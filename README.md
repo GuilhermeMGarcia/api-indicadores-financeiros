@@ -100,8 +100,8 @@ A coleta é feita pela função `get_fundamentus_html()` em `utils.py`, comparti
 ## Onde essa API é usada
 
 Esta API é consumida por uma planilha de controle de carteira de investimentos no Google Sheets, via Google Apps Script, que atualiza automaticamente os indicadores de ações e FIIs, o calendário de eventos regulatórios e os dados macroeconômicos da carteira.
-👉 Repositório da planilha: *(link a adicionar)*
-
+👉 Repositório da planilha: [*(link)*
+](https://github.com/GuilhermeMGarcia/carteira-investimentos)
 ## Rodando localmente
 
 ```bash
