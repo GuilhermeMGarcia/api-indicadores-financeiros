@@ -6,6 +6,7 @@ from api.fii import router as fii_router
 from api.stock import router as stock_router
 from api.calendar import router as calendar_router       # Importa o Calendário
 from api.proxy_fnet import router as proxy_fnet_router   # Importa o novo Proxy FNET
+from api.proxy_quantbrasil import router as proxy_quantbrasil_router  # Proxy de diagnóstico QuantBrasil
 
 # Configuração global da API
 app = FastAPI(
@@ -24,6 +25,7 @@ app = FastAPI(
 # Rotas de Proxy (Diagnósticos)
 app.include_router(proxy_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
 app.include_router(proxy_fnet_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"]) # Registra o Proxy FNET
+app.include_router(proxy_quantbrasil_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"]) # Registra o Proxy QuantBrasil
 
 # Rotas de Dados
 app.include_router(fii_router, prefix="/api", tags=["Fundos Imobiliários (FIIs)"])
@@ -275,6 +277,11 @@ async def home():
                         <span class="method">GET</span>
                         <span class="path">/api/proxy/{ticker}</span>
                         <span class="desc">HTML bruto do Fundamentus, pra inspeção</span>
+                    </a>
+                    <a class="row" href="/api/proxy_quantbrasil/PETR4">
+                        <span class="method">GET</span>
+                        <span class="path">/api/proxy_quantbrasil/{ticker}</span>
+                        <span class="desc">HTML bruto do QuantBrasil, pra inspeção</span>
                     </a>
                 </section>
 

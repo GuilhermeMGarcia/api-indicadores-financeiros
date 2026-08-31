@@ -1,5 +1,8 @@
 from fastapi import APIRouter, HTTPException
-from api.utils import parse_percent, parse_float, parse_int, get_fundamentus_html
+from api.utils import (
+    parse_percent, parse_float, parse_int,
+    get_fundamentus_html, get_quantbrasil_html, extract_beta_vs_ibov
+)
 
 router = APIRouter()
 
@@ -62,5 +65,14 @@ async def get_stock_data(ticker: str):
 
     if not res:
         raise HTTPException(status_code=404, detail="Nenhum dado válido encontrado para esta ação")
+
+    # Beta vs IBOV (3 anos) vindo do QuantBrasil.
+    # Roda separado e não deixa a rota inteira quebrar caso o QuantBrasil
+    # esteja fora do ar ou mude a página - nesse caso o campo volta None.
+    try:
+        soup_qb = await get_quantbrasil_html(ticker)
+        res["beta_ibov_3a"] = extract_beta_vs_ibov(soup_qb, periodo="3 anos")
+    except Exception:
+        res["beta_ibov_3a"] = None
 
     return res

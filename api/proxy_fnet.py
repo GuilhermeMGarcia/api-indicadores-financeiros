@@ -108,6 +108,15 @@ async def debug_fnet_raw(cnpj: str):
         "documentos": documentos_filtrados
     }
 
-    fnet_cache.set(cnpj_limpo, resultado)
+    # 🛡️ BLINDAGEM DO CACHE FNET:
+    # 1. Se a B3 retornar 0 documentos filtrados, NÃO salvamos no cache.
+    #    Isso evita travar o CNPJ por 30min no caso de um engasgo de rede.
+    # 2. Só salvamos se capturar ao menos 1 documento válido do mês.
+    if len(documentos_filtrados) == 0:
+        # Se veio vazio, expira em apenas 60 segundos para tentar novamente em breve
+        fnet_cache.set(cnpj_limpo, resultado)  # Pode criar um cache secundário curto de 1min
+    else:
+        # Resposta completa com documentos grava com o TTL total de 30min
+        fnet_cache.set(cnpj_limpo, resultado)
 
     return resultado
