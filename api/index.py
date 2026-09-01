@@ -7,15 +7,16 @@ from api.stock import router as stock_router
 from api.calendar import router as calendar_router       # Importa o Calendário
 from api.proxy_fnet import router as proxy_fnet_router   # Importa o novo Proxy FNET
 from api.proxy_quantbrasil import router as proxy_quantbrasil_router  # Proxy de diagnóstico QuantBrasil
+from api.tesouro import router as tesouro_router         # Importa o Tesouro Direto
 
 # Configuração global da API
 app = FastAPI(
     title="🚀 Indicador API - Sistema de Inteligência Financeira",
     description="""
-    API de captura e processamento de indicadores financeiros (Ações e FIIs).
-    Utiliza Web Scraping assíncrono para extração de dados do Fundamentus e FNET.
+    API de captura e processamento de indicadores financeiros (Ações, FIIs e Renda Fixa/Tesouro).
+    Utiliza Web Scraping e conectores diretos para extração de dados do Fundamentus, FNET e Tesouro Direto.
     """,
-    version="1.2.0",
+    version="1.3.0",
     docs_url="/docs",
     redoc_url=None  # Desativa o /redoc automático — servido manualmente abaixo com CDN fixo
 )
@@ -31,13 +32,13 @@ app.include_router(proxy_quantbrasil_router, prefix="/api", tags=["Ferramentas d
 app.include_router(fii_router, prefix="/api", tags=["Fundos Imobiliários (FIIs)"])
 app.include_router(stock_router, prefix="/api", tags=["Ações (Stocks)"])
 app.include_router(calendar_router, prefix="/api", tags=["Calendário de Eventos (FNET)"])       # Registra o Calendário
+app.include_router(tesouro_router, prefix="/api", tags=["Renda Fixa (Tesouro Direto)"])       # Registra o Tesouro Direto
 
 
 @app.get("/redoc", include_in_schema=False)
 async def redoc_html():
     """
-    ReDoc servido manualmente, com uma versão fixa do CDN (em vez de @next,
-    que muda sem aviso e pode quebrar o carregamento, deixando a página em branco).
+    ReDoc servido manualmente, com uma versão fixa do CDN.
     """
     return get_redoc_html(
         openapi_url=app.openapi_url,
@@ -219,13 +220,12 @@ async def home():
 
             <div class="wrap">
                 <header>
-                    <div class="eyebrow">Indicador API · v1.2.0</div>
+                    <div class="eyebrow">Indicador API · v1.3.0</div>
                     <h1>Dados fundamentalistas da B3,<br>prontos pra consumo.</h1>
                     <p class="lede">
-                        Coleta e organiza indicadores de Ações e FIIs direto do Fundamentus,
-                        além de eventos regulatórios da B3/FNET — via scraping assíncrono,
-                        servidos como JSON simples. Construída para alimentar uma planilha
-                        de acompanhamento de carteira via Google Apps Script.
+                        Coleta e organiza indicadores de Ações, FIIs, Tesouro Direto e eventos
+                        regulatórios da B3/FNET — via scraping assíncrono, servidos como JSON simples.
+                        Construída para alimentar uma planilha de acompanhamento de carteira via Google Apps Script.
                     </p>
                 </header>
 
@@ -244,7 +244,7 @@ async def home():
                 </section>
 
                 <section>
-                    <div class="section-title">Ações &amp; FIIs</div>
+                    <div class="section-title">Ações, FIIs &amp; Renda Fixa</div>
                     <a class="row" href="/api/stock/PETR4">
                         <span class="method">GET</span>
                         <span class="path">/api/stock/PETR4</span>
@@ -254,6 +254,11 @@ async def home():
                         <span class="method">GET</span>
                         <span class="path">/api/fii/HGLG11</span>
                         <span class="desc">Indicadores de um Fundo Imobiliário</span>
+                    </a>
+                    <a class="row" href="/api/tesouro">
+                        <span class="method">GET</span>
+                        <span class="path">/api/tesouro</span>
+                        <span class="desc">Preços e taxas em tempo real do Tesouro Direto</span>
                     </a>
                 </section>
 
@@ -287,7 +292,7 @@ async def home():
 
                 <footer>
                     <span>Desenvolvido para integração com Google Apps Script</span>
-                    <span>Dados: <a href="https://www.fundamentus.com.br/index.php">Fundamentus</a></span>
+                    <span>Dados: <a href="https://www.fundamentus.com.br/index.php">Fundamentus</a> | Tesouro Direto</span>
                 </footer>
             </div>
         </body>
