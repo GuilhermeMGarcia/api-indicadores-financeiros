@@ -48,9 +48,10 @@ async def redoc_html():
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 async def home():
     """
-    Página inicial estilizada com atalhos de teste
+    Página inicial estilizada com ticker tape dinâmico do Tesouro Direto
     """
     return """
     <html>
@@ -95,11 +96,10 @@ async def home():
                 .ticker-track {
                     display: inline-block;
                     padding: 10px 0;
-                    animation: scroll-left 28s linear infinite;
+                    animation: scroll-left 35s linear infinite;
                 }
-                .ticker-track span { margin-right: 40px; font-size: 13px; color: var(--text-dim); }
-                .ticker-track .up { color: var(--accent); }
-                .ticker-track .down { color: #E8646B; }
+                .ticker-track span { margin-right: 30px; font-size: 13px; color: var(--text-dim); }
+                .ticker-track .rate { color: var(--accent); font-weight: 600; }
                 @keyframes scroll-left {
                     from { transform: translateX(0); }
                     to { transform: translateX(-50%); }
@@ -204,17 +204,8 @@ async def home():
         </head>
         <body>
             <div class="ticker-outer">
-                <div class="ticker-track">
-                    <span>PETR4 <span class="up">▲ ROE 24.1%</span></span>
-                    <span>KNRI11 <span class="down">▼ VACÂNCIA 3.2%</span></span>
-                    <span>ITSA4 <span class="up">▲ DIV. YIELD 6.8%</span></span>
-                    <span>HGLG11 <span class="up">▲ P/VP 0.97</span></span>
-                    <span>CMIG4 <span class="down">▼ DÍVIDA/PL 1.4</span></span>
-                    <span>PETR4 <span class="up">▲ ROE 24.1%</span></span>
-                    <span>KNRI11 <span class="down">▼ VACÂNCIA 3.2%</span></span>
-                    <span>ITSA4 <span class="up">▲ DIV. YIELD 6.8%</span></span>
-                    <span>HGLG11 <span class="up">▲ P/VP 0.97</span></span>
-                    <span>CMIG4 <span class="down">▼ DÍVIDA/PL 1.4</span></span>
+                <div class="ticker-track" id="ticker-content">
+                    <span>Carregando taxas do Tesouro...</span>
                 </div>
             </div>
 
@@ -295,6 +286,42 @@ async def home():
                     <span>Dados: <a href="https://www.fundamentus.com.br/index.php">Fundamentus</a> | Tesouro Direto</span>
                 </footer>
             </div>
+
+            <script>
+                async function carregarTicker() {
+                    const container = document.getElementById('ticker-content');
+                    try {
+                        const res = await fetch('/api/tesouro');
+                        const data = await res.json();
+                        
+                        if (data.status === 'OK' && data.titulos && data.titulos.length > 0) {
+                            // Seleciona um mix variado das principais categorias
+                            const palavrasChave = ['Selic', 'IPCA+', 'Prefixado', 'Renda+', 'Educa+'];
+                            const titulosDestaque = [];
+            
+                            // Captura até 2 títulos de cada categoria
+                            palavrasChave.forEach(cat => {
+                                const filtrados = data.titulos.filter(t => t.nome.includes(cat)).slice(0, 2);
+                                titulosDestaque.push(...filtrados);
+                            });
+            
+                            // Mapeia para o formato de exibição no Ticker
+                            const itens = titulosDestaque.map(t => {
+                                const taxa = t.taxa_compra || t.taxa_venda || 'N/A';
+                                return `<span>${t.nome}: <span class="rate">${taxa}</span></span>`;
+                            }).join('');
+                            
+                            // Duplica a lista para garantir o efeito de animação contínua (loop sem saltos)
+                            container.innerHTML = itens + itens;
+                        } else {
+                            container.innerHTML = '<span>Tesouro Direto: Taxas indisponíveis no momento</span>';
+                        }
+                    } catch (e) {
+                        container.innerHTML = '<span>Tesouro Direto: Dados de mercado indisponíveis</span>';
+                    }
+                }
+                carregarTicker();
+            </script>
         </body>
     </html>
     """
