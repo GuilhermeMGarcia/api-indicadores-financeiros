@@ -283,7 +283,7 @@ async def home():
 
                 <footer>
                     <span>Desenvolvido para integração com Google Apps Script</span>
-                    <span>Dados: <a href="https://www.fundamentus.com.br/index.php">Fundamentus</a> | Tesouro Direto</span>
+                    <span>Dados: <a href="https://www.fundamentus.com.br/index.php">Fundamentus</a> | <a href="https://www.tesourodireto.com.br/produtos/dados-sobre-titulos/historico-de-precos-e-taxas">Tesouro Direto</a></span>
                 </footer>
             </div>
 
