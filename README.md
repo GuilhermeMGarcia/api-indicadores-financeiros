@@ -1,12 +1,12 @@
 # api-indicadores-financeiros
 
-API própria em Python, hospedada na Vercel, que centraliza indicadores fundamentalistas de ações e FIIs da B3, além de eventos regulatórios (CVM/FNET). Criada para alimentar automaticamente uma planilha de acompanhamento de carteira de investimentos no Google Sheets, eliminando a atualização manual de dados.
+API própria em Python, hospedada na Vercel, que centraliza indicadores fundamentalistas de ações e FIIs da B3, preços e taxas do Tesouro Direto, além de eventos regulatórios (CVM/FNET). Criada para alimentar automaticamente uma planilha de acompanhamento de carteira de investimentos no Google Sheets, eliminando a atualização manual de dados.
 
 🔗 **API em produção:** https://api-indicadores-financeiros.vercel.app
 
 ## Por que esse projeto existe
 
-Manter uma carteira de investimentos exige atualizar constantemente indicadores fundamentalistas (P/L, ROE, dívida, DY, Beta, etc.) de dezenas de ativos. Fazer isso manualmente é lento e sujeito a erro. Esta API resolve isso: ela expõe endpoints simples que retornam os indicadores já tratados, prontos para consumo por qualquer cliente HTTP — no meu caso, por scripts em Google Apps Script que atualizam automaticamente uma planilha de carteira em alto desempenho.
+Manter uma carteira de investimentos exige atualizar constantemente indicadores fundamentalistas (P/L, ROE, dívida, DY, Beta, etc.) e taxas de renda fixa de dezenas de ativos. Fazer isso manualmente é lento e sujeito a erros. Esta API resolve isso: ela expõe endpoints simples que retornam os indicadores já tratados, prontos para consumo por qualquer cliente HTTP — no meu caso, por scripts em Google Apps Script que atualizam automaticamente uma planilha de carteira em alto desempenho.
 
 ## Endpoints
 
@@ -47,6 +47,22 @@ Retorna indicadores de um Fundo de Investimento Imobiliário.
 | `qtd_imóveis`, `qtd_unidades`, `qtd_cotas` | Dados estruturais do fundo |
 | `doc` | Link do gerenciador de documentos na CVM/FNET |
 
+### `GET /api/tesouro`
+Retorna preços e taxas em tempo real de todos os títulos públicos (Selic, IPCA+, Prefixados, Renda+ e Educa+), unificando as tabelas de investimento e resgate.
+
+**Exemplo:** `GET /api/tesouro`
+
+**Resposta (campos principais):**
+| Campo | Descrição |
+|---|---|
+| `nome` | Nome oficial do título do Tesouro Direto |
+| `taxa_compra` | Rentabilidade anual oferecida para compra/aplicação |
+| `preco_compra` | Preço unitário atual para aplicação |
+| `investimento_minimo` | Valor mínimo exigido para aplicação |
+| `taxa_venda` | Rentabilidade anual oferecida para resgate antecipado |
+| `preco_venda` | Preço unitário atual para resgate antecipado |
+| `vencimento` | Data de vencimento do título |
+
 ### `POST /api/calendar`
 Retorna eventos regulatórios recentes (fatos relevantes, informes, relatórios) para uma lista de fundos, cruzando ticker e CNPJ.
 
@@ -57,6 +73,7 @@ Retorna eventos regulatórios recentes (fatos relevantes, informes, relatórios)
     { "ticker": "KNRI11", "cnpj": "12345678000199" }
   ]
 }
+
 ```
 
 **Resposta:** lista de eventos, cada um com `ticker`, `data_envio`, `tipo_documento`, `assunto` e `link` para o documento original.
@@ -75,9 +92,10 @@ Rota de diagnóstico: retorna o HTML bruto do Fundamentus para um ticker, sem pa
 
 ## Cache
 
-Todas as rotas que fazem scraping (Fundamentus e B3/FNET) usam um cache em memória com TTL de **30 minutos**, implementado em `cache.py`. Isso reduz o número de requisições às fontes externas — protegendo contra bloqueio por excesso de tráfego — e diminui o tempo de resposta em chamadas repetidas.
+Todas as rotas que realizam requisições externas (Fundamentus, B3/FNET e Tesouro Direto) usam um cache em memória com TTL de **30 minutos**, implementado em `cache.py`. Isso reduz o número de requisições às fontes externas — protegendo contra bloqueio por excesso de tráfego — e diminui o tempo de resposta em chamadas repetidas.
 
 * `/api/stock` e `/api/fii` compartilham o cache de HTML do Fundamentus (via `utils.py`)
+* `/api/tesouro` mantém o cache consolidado dos CSVs de preços e taxas do Tesouro Direto
 * `/api/proxy` tem seu próprio cache de HTML, na mesma janela de 30 min
 * `/api/proxy_fnet` cacheia o resultado já filtrado por CNPJ; como `/api/calendar` consome esse endpoint internamente, ele é beneficiado pelo mesmo cache sem necessidade de lógica própria
 
@@ -87,30 +105,25 @@ Todas as rotas que fazem scraping (Fundamentus e B3/FNET) usam um cache em memó
 
 A API opera como uma camada de agregação e estruturação de dados de múltiplas fontes públicas e de mercado:
 
-- **[Fundamentus](https://www.fundamentus.com.br/index.php):** Utilizado via web scraping para a extração dos indicadores fundamentalistas de Ações e FIIs (`/api/stock` e `/api/fii`). Todo crédito pela centralização dos indicadores de balanço e múltiplos originais pertence ao Fundamentus.
-- **[FNET / B3 (CVM)](https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM):** Sistema de entrega de documentos da CVM/B3 consumido pelos endpoints `/api/proxy_fnet` e `/api/calendar` para monitorar eventos regulatórios (fatos relevantes, informes mensais e relatórios gerenciais) em tempo real.
-- **[QuantBrasil](https://quantbrasil.com.br/):** Plataforma de análise e dados de mercado (*"Não opere no escuro"*), utilizada como referência e suporte complementar para métricas quantitativas e de acompanhamento do mercado financeiro brasileiro.
-
-A função `get_fundamentus_html()` em `utils.py` gerencia a coleta do Fundamentus, enquanto os conectores de rede realizam a ponte com os sistemas da B3 e dados de mercado.
+* **[Fundamentus](https://www.fundamentus.com.br/index.php):** Utilizado via web scraping para a extração dos indicadores fundamentalistas de Ações e FIIs (`/api/stock` e `/api/fii`). Todo crédito pela centralização dos indicadores de balanço e múltiplos originais pertence ao Fundamentus.
+* **[Tesouro Direto](https://www.tesourodireto.com.br/):** Fonte oficial dos arquivos CSV de preços e taxas de investimento e resgate de títulos públicos (`/api/tesouro`).
+* **[FNET / B3 (CVM)](https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM):** Sistema de entrega de documentos da CVM/B3 consumido pelos endpoints `/api/proxy_fnet` e `/api/calendar` para monitorar eventos regulatórios (fatos relevantes, informes mensais e relatórios gerenciais) em tempo real.
+* **[QuantBrasil](https://quantbrasil.com.br/):** Plataforma de análise e dados de mercado, utilizada como referência e suporte complementar para métricas quantitativas e de acompanhamento do mercado financeiro brasileiro.
 
 > Este projeto é de uso pessoal/educacional. Os dados pertencem aos seus respectivos provedores de origem e devem ser utilizados respeitando os termos de uso de cada plataforma.
-
-A coleta é feita pela função `get_fundamentus_html()` em `utils.py`, compartilhada pelas rotas `/api/stock` e `/api/fii`. O módulo `proxy.py` expõe uma rota separada só para inspecionar o HTML bruto retornado.
-
-> Este projeto é de uso pessoal/educacional. Os dados pertencem ao Fundamentus e à B3/CVM e devem ser usados respeitando os termos dos sites de origem.
 
 ## Stack
 
 * **Linguagem:** Python 3.x
 * **Framework Web:** FastAPI
-* **Parsing / Web Scraping:** BeautifulSoup4 / HTTP Clients (`requests`, `httpx`)
+* **Parsing / Web Scraping / Networking:** BeautifulSoup4, HTTP Clients (`httpx`, `requests`) e `curl-cffi` (impersonate Chrome 120 para conversação TLS e bypass de proteção WAF no Tesouro Direto)
 * **Servidor ASGI (dev):** Uvicorn
 * **Deploy:** Vercel (serverless functions)
 * **Configuração:** `vercel.json`, `requirements.txt`
 
 ## Onde essa API é usada
 
-Esta API é consumida por uma planilha de controle de carteira de investimentos no Google Sheets, via Google Apps Script, que atualiza automaticamente os indicadores de ações e FIIs, o calendário de eventos regulatórios e os dados macroeconômicos da carteira.
+Esta API é consumida por uma planilha de controle de carteira de investimentos no Google Sheets, via Google Apps Script, que atualiza automaticamente os indicadores de ações e FIIs, o calendário de eventos regulatórios e a precificação de títulos públicos da carteira.
 
 👉 Repositório da planilha: [carteira-investimentos](https://github.com/GuilhermeMGarcia/carteira-investimentos)
 
@@ -124,8 +137,12 @@ uvicorn api.index:app --reload
 
 ```
 
-A API sobe em `http://127.0.0.1:8000`. A página inicial (`/`) traz um painel com atalhos para todos os endpoints; a documentação interativa fica em `/docs` (Swagger) e `/redoc` (ReDoc).
+A API sobe em `http://127.0.0.1:8000`. A página inicial (`/`) traz um painel interativo com ticker tape dinâmico e atalhos para todos os endpoints; a documentação interativa fica em `/docs` (Swagger) e `/redoc` (ReDoc).
 
 ## Autor
 
 G.Garcia
+
+```
+
+```
