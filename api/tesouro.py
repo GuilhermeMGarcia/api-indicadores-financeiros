@@ -10,9 +10,12 @@ from api.proxy_tesouro import verificar_status_tesouro
 
 router = APIRouter()
 
-URL_HOME_TESOURO = "https://www.tesourodireto.com.br/titulos/precos-e-taxas.htm"
+URL_HOME_TESOURO = "https://www.tesourodireto.com.br/produtos/dados-sobre-titulos/historico-de-precos-e-taxas"
 URL_INVESTIR_CSV = "https://www.tesourodireto.com.br/documents/d/guest/rendimento-investir-csv?download=true"
 URL_RESGATAR_CSV = "https://www.tesourodireto.com.br/documents/d/guest/rendimento-resgatar-csv?download=true"
+
+# Lista de navegadores para alternar no bypass do Cloudflare WAF
+IMPERSONATES = ["chrome120", "chrome119", "safari15_5"]
 
 TESOURO_CACHE_TTL_SECONDS = 30 * 60  # Cache de 30 minutos
 tesouro_cache = TTLCache(ttl_seconds=TESOURO_CACHE_TTL_SECONDS)
@@ -49,44 +52,57 @@ def _extrair_vencimento(nome: str, vencimento_csv: str) -> str:
 
 
 def _fetch_tesouro_com_sessao_sync(max_retries=3) -> tuple[str, str]:
-    """
-    Tenta abrir a home e baixar os CSVs com sistema de retry interno.
-    Se falhar, fecha a sessão e abre uma nova com impersonate do Chrome.
-    """
-    for tentativa in range(1, max_retries + 1):
+    headers_base = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    ultima_excecao = None
+
+    for tentativa in range(max_retries):
+        browser = IMPERSONATES[tentativa % len(IMPERSONATES)]
+
         try:
-            with requests.Session(impersonate="chrome120") as session:
-                headers_base = {
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "same-origin",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-
+            with requests.Session(impersonate=browser) as session:
+                # 1. Handshake na home
                 res_home = session.get(URL_HOME_TESOURO, headers=headers_base, timeout=10)
-                if res_home.status_code != 200:
-                    raise Exception(f"Falha ao abrir home do Tesouro: Status {res_home.status_code}")
+                html_lower = res_home.text.lower() if res_home.text else ""
 
+                eh_desafio = (
+                        "just a moment..." in html_lower or
+                        "enable javascript" in html_lower or
+                        'name="robots"' in html_lower
+                )
+
+                if res_home.status_code != 200 or eh_desafio:
+                    raise Exception(f"WAF ativo na Home (HTTP {res_home.status_code})")
+
+                # 2. Download dos CSVs
                 res_investir = session.get(URL_INVESTIR_CSV, headers=headers_base, timeout=12)
                 res_resgatar = session.get(URL_RESGATAR_CSV, headers=headers_base, timeout=12)
 
-                if res_investir.status_code == 200 and res_resgatar.status_code == 200:
+                # Validação estrita de conteúdo dos CSVs (Status OK Real)
+                investir_ok = res_investir.status_code == 200 and "Título;" in res_investir.text
+                resgatar_ok = res_resgatar.status_code == 200 and "Título;" in res_resgatar.text
+
+                if investir_ok and resgatar_ok:
                     return (
                         res_investir.content.decode("utf-8-sig"),
                         res_resgatar.content.decode("utf-8-sig"),
                     )
 
-                raise Exception(
-                    f"Erro ao baixar CSVs. Investir: {res_investir.status_code} | Resgatar: {res_resgatar.status_code}"
-                )
+                raise Exception("Conteúdo inválido retornado nos CSVs (Possível bloqueio)")
 
         except Exception as e:
-            if tentativa < max_retries:
-                time.sleep(1)
-            else:
-                raise e
+            ultima_excecao = e
+            if tentativa < max_retries - 1:
+                time.sleep(0.5 * (tentativa + 1))
+
+    raise Exception(f"Falha ao validar Status OK após {max_retries} tentativas: {str(ultima_excecao)}")
 
 
 def _parse_investir_csv(texto: str) -> dict:
@@ -120,7 +136,6 @@ def _parse_resgatar_csv(texto: str) -> dict:
 
 
 @router.get("/tesouro")
-@router.get("/tesouro")
 async def get_tesouro_bonds():
     """
     Retorna preços e taxas do Tesouro Direto compatível com Vercel Serverless.
@@ -129,7 +144,7 @@ async def get_tesouro_bonds():
     if cached is not None:
         return cached
 
-    # 1. Checagem prévia do status do mercado em thread isolada (compatível com Vercel)
+    # 1. Checagem prévia do status do mercado em thread isolada
     try:
         status_mercado = await asyncio.to_thread(verificar_status_tesouro)
         if isinstance(status_mercado, dict) and not status_mercado.get("mercado_aberto", True):
@@ -140,10 +155,9 @@ async def get_tesouro_bonds():
                 "titulos": []
             }
     except Exception:
-        # Se falhar a verificação, prossegue para não travar a API à toa
         pass
 
-    # 2. Busca os dados via thread segura
+    # 2. Busca os dados via thread isolada
     try:
         texto_investir, texto_resgatar = await asyncio.to_thread(_fetch_tesouro_com_sessao_sync)
     except Exception as e:
@@ -180,7 +194,8 @@ async def get_tesouro_bonds():
         "titulos": lista_titulos,
     }
 
-    if len(lista_titulos) > 0:
+    # Só salva no cache se a lista tiver títulos E o status for explicitamente OK
+    if len(lista_titulos) > 0 and resultado.get("status") == "OK":
         tesouro_cache.set("titulos", resultado)
 
     return resultado
