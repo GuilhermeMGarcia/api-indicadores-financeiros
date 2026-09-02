@@ -120,31 +120,32 @@ def _parse_resgatar_csv(texto: str) -> dict:
 
 
 @router.get("/tesouro")
+@router.get("/tesouro")
 async def get_tesouro_bonds():
     """
-    Retorna preços e taxas do Tesouro Direto.
-    Verifica primeiro se o mercado está em manutenção para evitar erros de leitura.
+    Retorna preços e taxas do Tesouro Direto compatível com Vercel Serverless.
     """
     cached = tesouro_cache.get("titulos")
     if cached is not None:
         return cached
 
-    # 1. Checagem prévia do status do mercado
-    status_mercado = await verificar_status_tesouro()
-    if isinstance(status_mercado, dict) and not status_mercado.get("mercado_aberto", True):
-        return {
-            "status": "MANUTENCAO",
-            "mensagem": "Mercado em Manutenção no Tesouro Direto",
-            "total": 0,
-            "titulos": []
-        }
-
-    # 2. Busca os dados caso o mercado esteja operacional
+    # 1. Checagem prévia do status do mercado em thread isolada (compatível com Vercel)
     try:
-        loop = asyncio.get_event_loop()
-        texto_investir, texto_resgatar = await loop.run_in_executor(
-            None, _fetch_tesouro_com_sessao_sync
-        )
+        status_mercado = await asyncio.to_thread(verificar_status_tesouro)
+        if isinstance(status_mercado, dict) and not status_mercado.get("mercado_aberto", True):
+            return {
+                "status": "MANUTENCAO",
+                "mensagem": "Mercado em Manutenção no Tesouro Direto",
+                "total": 0,
+                "titulos": []
+            }
+    except Exception:
+        # Se falhar a verificação, prossegue para não travar a API à toa
+        pass
+
+    # 2. Busca os dados via thread segura
+    try:
+        texto_investir, texto_resgatar = await asyncio.to_thread(_fetch_tesouro_com_sessao_sync)
     except Exception as e:
         raise HTTPException(
             status_code=502, detail=f"Erro ao acessar Tesouro Direto: {str(e)}"
