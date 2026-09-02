@@ -9,7 +9,7 @@ router = APIRouter()
 
 proxy_tesouro_cache = TTLCache(ttl_seconds=120)
 
-URL_PAGINA_TESOURO = "https://www.tesourodireto.com.br/produtos/dados-sobre-titulos/historico-de-precos-e-taxas"
+URL_PAGINA_TESOURO = "https://www.tesourodireto.com.br/titulos/precos-e-taxas.htm"
 URL_JSON_TESOURO = "https://www.tesourodireto.com.br/json/treport/tesourodireto.json"
 
 HEADERS = {
@@ -105,12 +105,18 @@ async def verificar_status_tesouro():
 
 
 @router.get("/proxy_tesouro/raw")
+@router.get("/proxy_tesouro/raw")
 async def proxy_tesouro_raw():
     """
-    Retorna o HTML da página do Tesouro para verificação visual.
+    Retorna a resposta bruta do Tesouro (HTML ou JSON fallback) para verificação.
     """
     try:
         resp = await asyncio.to_thread(_fetch_tesouro_sync)
-        return Response(content=resp.text, media_type="text/html")
+        if resp.status_code == 200:
+            return Response(content=resp.text, media_type="text/html")
+
+        # Se o HTML der erro/bloqueio, retorna o JSON oficial do Tesouro
+        resp_json = await asyncio.to_thread(_fetch_tesouro_json_sync)
+        return Response(content=resp_json.text, media_type="application/json")
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
