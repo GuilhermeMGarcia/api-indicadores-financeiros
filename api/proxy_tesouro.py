@@ -23,23 +23,34 @@ HEADERS = {
 }
 
 
-def _fetch_com_retry(url: str, retries: int = 3, backoff_factor: float = 0.4):
+def _fetch_com_retry(url: str, retries: int = 3, backoff_factor: float = 0.3):
     """
-    Realiza chamadas HTTP emulando o navegador Chrome com retry e backoff.
+    Mantém uma sessão ativa (Session) entre as tentativas para
+    acumular os cookies do Cloudflare e ignorar o desafio de robô na 1ª chamada.
     """
+    session = requests.Session()
+
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(
+            resp = session.get(
                 url,
                 headers=HEADERS,
                 impersonate="chrome120",
                 timeout=8
             )
-            if resp.status_code == 200:
+
+            # Se a resposta contiver scripts de validação de robô/bot no HTML,
+            # força o loop a tentar novamente usando os cookies que a Session acabou de salvar
+            html_baixo = resp.text.lower()
+            eh_desafio_bot = "robot" in html_baixo or "bot" in html_baixo or "just a moment" in html_baixo
+
+            if resp.status_code == 200 and not eh_desafio_bot:
                 return resp
 
+            # Se caiu no desafio de robô ou tomou status != 200, aguarda a sessão maturar
             if attempt < retries:
                 time.sleep(backoff_factor * attempt)
+
         except Exception:
             if attempt < retries:
                 time.sleep(backoff_factor * attempt)
