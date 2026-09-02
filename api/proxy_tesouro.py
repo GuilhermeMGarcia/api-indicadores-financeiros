@@ -1,3 +1,4 @@
+import time
 import asyncio
 from bs4 import BeautifulSoup
 from fastapi import APIRouter
@@ -18,52 +19,61 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-def _fetch_tesouro_sync():
-    """Realiza a requisição simulando um navegador real via curl-cffi"""
-    return requests.get(
-        URL_PAGINA_TESOURO,
-        headers=HEADERS,
-        impersonate="chrome120",
-        timeout=10
-    )
 
-def _fetch_tesouro_json_sync():
-    """Fallback via API em JSON do Tesouro"""
-    return requests.get(
-        URL_JSON_TESOURO,
-        headers=HEADERS,
-        impersonate="chrome120",
-        timeout=10
-    )
+def _fetch_com_retry(url: str, retries: int = 3, backoff_factor: float = 0.5):
+    """
+    Realiza requisições com sistema de retry automático para contornar
+    instabilidades momentâneas de WAF/Cloudflare na Vercel.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(
+                url,
+                headers=HEADERS,
+                impersonate="chrome120",
+                timeout=6
+            )
+            # Se retornou 200, entrega a resposta imediatamente
+            if resp.status_code == 200:
+                return resp
+
+            # Se for status de erro (ex: 403, 500, 503), aguarda antes da próxima tentativa
+            if attempt < retries:
+                time.sleep(backoff_factor * attempt)
+        except Exception:
+            if attempt < retries:
+                time.sleep(backoff_factor * attempt)
+            else:
+                raise
+
+    return resp
+
 
 @router.get("/proxy_tesouro/status")
 async def verificar_status_tesouro():
     """
-    Inspeciona o HTML ou JSON do Tesouro Direto.
-    Diferencia bloqueio HTTP (403/500) de manutenção real do mercado.
+    Inspeciona o HTML ou JSON do Tesouro Direto utilizando sistema de Retry.
     """
     cached = proxy_tesouro_cache.get("status_mercado")
     if cached is not None:
         return cached
 
     try:
-        # 1. Tenta requisição síncrona em thread isolada (Vercel-safe)
-        resp = await asyncio.to_thread(_fetch_tesouro_sync)
+        # 1. Primeira tentativa: HTML via Retry
+        resp = await asyncio.to_thread(_fetch_com_retry, URL_PAGINA_TESOURO)
 
-        # Se for bloqueado pelo Cloudflare (403, 503, etc), ativa o Fallback do JSON
+        # 2. Se mesmo com retry o HTML falhar, aciona Fallback do JSON também com Retry
         if resp.status_code != 200:
-            resp_json = await asyncio.to_thread(_fetch_tesouro_json_sync)
+            resp_json = await asyncio.to_thread(_fetch_com_retry, URL_JSON_TESOURO)
 
-            # Se até o JSON falhar/bloquear, NÃO assuma Manutenção! Retorne erro de conexao/bypass.
             if resp_json.status_code != 200:
                 return {
-                    "mercado_aberto": True,  # Permite tentar baixar taxas/CSVs
+                    "mercado_aberto": True,
                     "status_texto": "Mercado Aberto (Bypass)",
-                    "detalhe": f"Bloqueio WAF (HTTP {resp.status_code}). Checagem ignorada.",
+                    "detalhe": f"Bloqueio WAF persistente (HTTP {resp.status_code}).",
                     "erro_conexao": True
                 }
 
-            # Se o JSON respondeu OK (200)
             status_resultado = {
                 "mercado_aberto": True,
                 "status_texto": "Mercado Aberto",
@@ -73,7 +83,7 @@ async def verificar_status_tesouro():
             proxy_tesouro_cache.set("status_mercado", status_resultado)
             return status_resultado
 
-        # 2. Se a página HTML respondeu 200, faz o parsing exato
+        # 3. Processamento do HTML quando retornado com sucesso (200 OK)
         html_content = resp.text
         soup = BeautifulSoup(html_content, "html.parser")
 
@@ -81,7 +91,6 @@ async def verificar_status_tesouro():
         texto_botao = botao_status.get_text(strip=True).lower() if botao_status else ""
         texto_html_completo = soup.get_text().lower()
 
-        # Só é MANUTENÇÃO se o texto no HTML afirmar explicitamente isso!
         em_manutencao = (
                 "mercado em manutenção" in texto_botao or
                 "mercado em manutenção" in texto_html_completo or
@@ -99,28 +108,25 @@ async def verificar_status_tesouro():
         return status_resultado
 
     except Exception as e:
-        # Em caso de timeout/crash de rede, assume aberto para não travar a dashboard
         return {
             "mercado_aberto": True,
             "status_texto": "Mercado Aberto",
-            "detalhe": f"Erro de rede no proxy: {str(e)}",
+            "detalhe": f"Erro de rede persistente: {str(e)}",
             "erro_conexao": True
         }
 
 
 @router.get("/proxy_tesouro/raw")
-@router.get("/proxy_tesouro/raw")
 async def proxy_tesouro_raw():
     """
-    Retorna a resposta bruta do Tesouro (HTML ou JSON fallback) para verificação.
+    Retorna o HTML bruto utilizando a função de Retry.
     """
     try:
-        resp = await asyncio.to_thread(_fetch_tesouro_sync)
+        resp = await asyncio.to_thread(_fetch_com_retry, URL_PAGINA_TESOURO)
         if resp.status_code == 200:
             return Response(content=resp.text, media_type="text/html")
 
-        # Se o HTML der erro/bloqueio, retorna o JSON oficial do Tesouro
-        resp_json = await asyncio.to_thread(_fetch_tesouro_json_sync)
+        resp_json = await asyncio.to_thread(_fetch_com_retry, URL_JSON_TESOURO)
         return Response(content=resp_json.text, media_type="application/json")
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
