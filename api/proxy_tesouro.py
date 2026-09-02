@@ -9,7 +9,7 @@ router = APIRouter()
 
 proxy_tesouro_cache = TTLCache(ttl_seconds=120)
 
-URL_PAGINA_TESOURO = "https://www.tesourodireto.com.br/titulos/precos-e-taxas.htm"
+URL_PAGINA_TESOURO = "https://www.tesourodireto.com.br/produtos/dados-sobre-titulos/historico-de-precos-e-taxas"
 URL_JSON_TESOURO = "https://www.tesourodireto.com.br/json/treport/tesourodireto.json"
 
 HEADERS = {
