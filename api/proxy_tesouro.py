@@ -39,69 +39,73 @@ def _fetch_tesouro_json_sync():
 @router.get("/proxy_tesouro/status")
 async def verificar_status_tesouro():
     """
-    Inspeciona o HTML real ou fallback JSON para determinar o status do mercado.
+    Inspeciona o HTML ou JSON do Tesouro Direto.
+    Diferencia bloqueio HTTP (403/500) de manutenção real do mercado.
     """
     cached = proxy_tesouro_cache.get("status_mercado")
     if cached is not None:
         return cached
 
     try:
-        # Executa a requisição síncrona em uma thread separada (Vercel-safe)
+        # 1. Tenta requisição síncrona em thread isolada (Vercel-safe)
         resp = await asyncio.to_thread(_fetch_tesouro_sync)
 
-        # Se for bloqueado pelo Cloudflare na Vercel, tenta o fallback em JSON
+        # Se for bloqueado pelo Cloudflare (403, 503, etc), ativa o Fallback do JSON
         if resp.status_code != 200:
             resp_json = await asyncio.to_thread(_fetch_tesouro_json_sync)
-            if resp_json.status_code == 200:
-                # O JSON oficial respondeu; consideramos o mercado aberto por padrão
-                status_resultado = {
-                    "mercado_aberto": True,
-                    "status_texto": "Mercado Aberto",
-                    "detalhe": "Verificado via JSON Fallback"
+
+            # Se até o JSON falhar/bloquear, NÃO assuma Manutenção! Retorne erro de conexao/bypass.
+            if resp_json.status_code != 200:
+                return {
+                    "mercado_aberto": True,  # Permite tentar baixar taxas/CSVs
+                    "status_texto": "Mercado Aberto (Bypass)",
+                    "detalhe": f"Bloqueio WAF (HTTP {resp.status_code}). Checagem ignorada.",
+                    "erro_conexao": True
                 }
-                proxy_tesouro_cache.set("status_mercado", status_resultado)
-                return status_resultado
 
-            return JSONResponse(
-                status_code=resp.status_code,
-                content={"mercado_aberto": False, "status_texto": f"HTTP {resp.status_code} no Tesouro"}
-            )
+            # Se o JSON respondeu OK (200)
+            status_resultado = {
+                "mercado_aberto": True,
+                "status_texto": "Mercado Aberto",
+                "detalhe": "Verificado via JSON Fallback",
+                "erro_conexao": False
+            }
+            proxy_tesouro_cache.set("status_mercado", status_resultado)
+            return status_resultado
 
+        # 2. Se a página HTML respondeu 200, faz o parsing exato
         html_content = resp.text
         soup = BeautifulSoup(html_content, "html.parser")
 
-        # 1. Busca direta pelo botão de status do mercado
         botao_status = soup.find("button", class_="open-modal-status-mercado")
         texto_botao = botao_status.get_text(strip=True).lower() if botao_status else ""
-
-        # 2. Busca fallback no texto do HTML
         texto_html_completo = soup.get_text().lower()
 
+        # Só é MANUTENÇÃO se o texto no HTML afirmar explicitamente isso!
         em_manutencao = (
-            "mercado em manutenção" in texto_botao or
-            "mercado em manutenção" in texto_html_completo or
-            "mercado fechado" in texto_botao
+                "mercado em manutenção" in texto_botao or
+                "mercado em manutenção" in texto_html_completo or
+                "mercado fechado" in texto_botao
         )
 
         status_resultado = {
             "mercado_aberto": not em_manutencao,
             "status_texto": "Mercado em Manutenção" if em_manutencao else "Mercado Aberto",
-            "detalhe": texto_botao if texto_botao else ("Em manutenção" if em_manutencao else "Operacional")
+            "detalhe": texto_botao if texto_botao else ("Em manutenção" if em_manutencao else "Operacional"),
+            "erro_conexao": False
         }
 
         proxy_tesouro_cache.set("status_mercado", status_resultado)
         return status_resultado
 
     except Exception as e:
-        # Retorna status gracioso para não quebrar a UI em caso de erro de rede
-        return JSONResponse(
-            status_code=200,
-            content={
-                "mercado_aberto": True,
-                "status_texto": "Mercado Aberto",
-                "detalhe": f"Bypass ativo devido a erro: {str(e)}"
-            }
-        )
+        # Em caso de timeout/crash de rede, assume aberto para não travar a dashboard
+        return {
+            "mercado_aberto": True,
+            "status_texto": "Mercado Aberto",
+            "detalhe": f"Erro de rede no proxy: {str(e)}",
+            "erro_conexao": True
+        }
 
 
 @router.get("/proxy_tesouro/raw")
