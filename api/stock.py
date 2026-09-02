@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from api.utils import (
     parse_percent, parse_float, parse_int,
@@ -6,25 +7,31 @@ from api.utils import (
 
 router = APIRouter()
 
-
 @router.get("/stock/{ticker}")
 async def get_stock_data(ticker: str):
     """
-    Retorna os indicadores de uma ação de forma assíncrona e otimizada.
+    Retorna os indicadores de uma ação executando requisições paralelas para Fundamentus e QuantBrasil.
     """
-    # Busca o HTML diretamente usando a nova função no utils.py
-    soup = await get_fundamentus_html(ticker)
+    # 🎯 Executa a busca do HTML de ambas as fontes simultaneamente para maior velocidade
+    soup_fundamentus, soup_qb = await asyncio.gather(
+        get_fundamentus_html(ticker),
+        get_quantbrasil_html(ticker),
+        return_exceptions=True
+    )
 
-    labels = soup.find_all("td", class_="label")
-    datas = soup.find_all("td", class_="data")
+    # Verifica se a requisição principal do Fundamentus falhou
+    if isinstance(soup_fundamentus, Exception) or not soup_fundamentus:
+        raise HTTPException(status_code=404, detail="Ticker de ação não encontrado ou erro de conexão")
+
+    labels = soup_fundamentus.find_all("td", class_="label")
+    datas = soup_fundamentus.find_all("td", class_="data")
 
     if not labels:
         raise HTTPException(status_code=404, detail="Ticker de ação não encontrado")
 
     res = {}
-    lucro_count = 0  # Contador para as duas ocorrências de "Lucro Líquido"
+    lucro_count = 0
 
-    # Mapeamento: Nome no site -> (Chave no JSON, Função de conversão)
     mapeamento = {
         "ROE": ("roe", parse_percent),
         "ROIC": ("roic", parse_percent),
@@ -50,29 +57,26 @@ async def get_stock_data(ticker: str):
         val = data_td.get_text(strip=True)
 
         try:
-            # Verifica se o label está no nosso mapa de tradução
             if lbl in mapeamento:
                 key, func = mapeamento[lbl]
                 res[key] = func(val)
-
-            # Tratamento especial para o Lucro Líquido (aparece 2 vezes)
             elif lbl == "Lucro Líquido":
                 key = "lucro_liquido_12m" if lucro_count == 0 else "lucro_liquido_3m"
                 res[key] = parse_int(val)
                 lucro_count += 1
         except Exception:
-            continue  # Ignora erros de parsing em campos específicos
+            continue
 
     if not res:
         raise HTTPException(status_code=404, detail="Nenhum dado válido encontrado para esta ação")
 
-    # Beta vs IBOV (3 anos) vindo do QuantBrasil.
-    # Roda separado e não deixa a rota inteira quebrar caso o QuantBrasil
-    # esteja fora do ar ou mude a página - nesse caso o campo volta None.
-    try:
-        soup_qb = await get_quantbrasil_html(ticker)
-        res["beta_ibov_3a"] = extract_beta_vs_ibov(soup_qb, periodo="3 anos")
-    except Exception:
+    # Extrai o Beta do QuantBrasil caso a requisição tenha obtido sucesso
+    if isinstance(soup_qb, Exception) or not soup_qb:
         res["beta_ibov_3a"] = None
+    else:
+        try:
+            res["beta_ibov_3a"] = extract_beta_vs_ibov(soup_qb, periodo="3 anos")
+        except Exception:
+            res["beta_ibov_3a"] = None
 
     return res

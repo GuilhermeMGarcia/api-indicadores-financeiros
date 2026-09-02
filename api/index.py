@@ -283,7 +283,7 @@ async def home():
             <div class="wrap">
                 <div class="hero-grid">
                     <header>
-                        <div class="eyebrow">Indicador API · v1.3.2</div>
+                        <div class="eyebrow">Indicador API · v1.3.5</div>
                         <h1>Dados fundamentalistas da B3, prontos pra consumo.</h1>
                         <p class="lede">
                             Coleta e organiza indicadores de Ações, FIIs, Tesouro Direto e eventos regulatórios da 
