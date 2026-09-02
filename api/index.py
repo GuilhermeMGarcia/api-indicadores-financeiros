@@ -4,12 +4,12 @@ from fastapi.openapi.docs import get_redoc_html
 from api.proxy import router as proxy_router
 from api.fii import router as fii_router
 from api.stock import router as stock_router
-from api.calendar import router as calendar_router       # Importa o Calendário
-from api.proxy_fnet import router as proxy_fnet_router   # Importa o novo Proxy FNET
-from api.proxy_quantbrasil import router as proxy_quantbrasil_router  # Proxy de diagnóstico QuantBrasil
-from api.tesouro import router as tesouro_router         # Importa o Tesouro Direto
+from api.calendar import router as calendar_router
+from api.proxy_fnet import router as proxy_fnet_router
+from api.proxy_quantbrasil import router as proxy_quantbrasil_router
+from api.tesouro import router as tesouro_router
+from api.proxy_tesouro import router as proxy_tesouro_router
 
-# Configuração global da API
 app = FastAPI(
     title="🚀 Indicador API - Sistema de Inteligência Financeira",
     description="""
@@ -18,28 +18,23 @@ app = FastAPI(
     """,
     version="1.3.0",
     docs_url="/docs",
-    redoc_url=None  # Desativa o /redoc automático — servido manualmente abaixo com CDN fixo
+    redoc_url=None
 )
 
-# --- INCLUSÃO DAS ROTAS (Módulos) ---
-
-# Rotas de Proxy (Diagnósticos)
+# --- INCLUSÃO DAS ROTAS ---
 app.include_router(proxy_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
-app.include_router(proxy_fnet_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"]) # Registra o Proxy FNET
-app.include_router(proxy_quantbrasil_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"]) # Registra o Proxy QuantBrasil
+app.include_router(proxy_fnet_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
+app.include_router(proxy_quantbrasil_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
+app.include_router(proxy_tesouro_router, prefix="/api", tags=["Ferramentas de Diagnóstico (Proxy)"])
 
-# Rotas de Dados
 app.include_router(fii_router, prefix="/api", tags=["Fundos Imobiliários (FIIs)"])
 app.include_router(stock_router, prefix="/api", tags=["Ações (Stocks)"])
-app.include_router(calendar_router, prefix="/api", tags=["Calendário de Eventos (FNET)"])       # Registra o Calendário
-app.include_router(tesouro_router, prefix="/api", tags=["Renda Fixa (Tesouro Direto)"])       # Registra o Tesouro Direto
+app.include_router(calendar_router, prefix="/api", tags=["Calendário de Eventos (FNET)"])
+app.include_router(tesouro_router, prefix="/api", tags=["Renda Fixa (Tesouro Direto)"])
 
 
 @app.get("/redoc", include_in_schema=False)
 async def redoc_html():
-    """
-    ReDoc servido manualmente, com uma versão fixa do CDN.
-    """
     return get_redoc_html(
         openapi_url=app.openapi_url,
         title=f"{app.title} - Documentação",
@@ -48,12 +43,7 @@ async def redoc_html():
 
 
 @app.get("/", response_class=HTMLResponse)
-@app.get("/", response_class=HTMLResponse)
-@app.get("/", response_class=HTMLResponse)
 async def home():
-    """
-    Página inicial estilizada com ticker tape dinâmico e Dashboard de Monitoramento do Tesouro
-    """
     return """
     <html>
         <head>
@@ -105,9 +95,6 @@ async def home():
                     from { transform: translateX(0); }
                     to { transform: translateX(-50%); }
                 }
-                @media (prefers-reduced-motion: reduce) {
-                    .ticker-track { animation: none; }
-                }
 
                 header { margin-top: 20px; margin-bottom: 30px; }
                 .eyebrow {
@@ -132,7 +119,6 @@ async def home():
                     margin: 0;
                 }
 
-                /* GRID HEAD DO DASHBOARD */
                 .hero-grid {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
@@ -167,6 +153,29 @@ async def home():
                     text-transform: uppercase;
                     letter-spacing: 0.05em;
                 }
+
+                /* Badges de Status do Mercado */
+                .status-badge {
+                    font-size: 10px;
+                    font-weight: 600;
+                    padding: 2px 7px;
+                    border-radius: 4px;
+                    letter-spacing: 0.04em;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                .status-badge.aberto {
+                    color: #3ECF8E;
+                    background: #3ECF8E22;
+                    border: 1px solid #3ECF8E55;
+                }
+                .status-badge.manutencao {
+                    color: #E8A33D;
+                    background: #E8A33D22;
+                    border: 1px solid #E8A33D55;
+                }
+
                 .btn-refresh {
                     background: var(--accent);
                     color: #0A0E1A;
@@ -274,7 +283,7 @@ async def home():
             <div class="wrap">
                 <div class="hero-grid">
                     <header>
-                        <div class="eyebrow">Indicador API · v1.3.0</div>
+                        <div class="eyebrow">Indicador API · v1.3.2</div>
                         <h1>Dados fundamentalistas da B3, prontos pra consumo.</h1>
                         <p class="lede">
                             Coleta e organiza indicadores de Ações, FIIs, Tesouro Direto e eventos regulatórios da 
@@ -283,10 +292,15 @@ async def home():
                         </p>
                     </header>
 
-                    <!-- WIDGET DE MONITORAMENTO COM BOTÃO GATILHO -->
+                    <!-- WIDGET DE MONITORAMENTO COM BADGE DE STATUS -->
                     <div class="monitor-card">
                         <div class="monitor-header">
-                            <span class="monitor-title">🎯 Tesouro+ Taxas</span>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="monitor-title">🎯 Tesouro+</span>
+                                <span id="market-status-badge" class="status-badge aberto">
+                                    <span style="font-size: 8px;">●</span> VERIFICANDO
+                                </span>
+                            </div>
                             <button id="btn-atualizar" class="btn-refresh" onclick="dispararGatilhoTesouro()">
                                 🔄 Atualizar Taxas
                             </button>
@@ -356,6 +370,11 @@ async def home():
                         <span class="path">/api/proxy_quantbrasil/{ticker}</span>
                         <span class="desc">HTML bruto do QuantBrasil, pra inspeção</span>
                     </a>
+                    <a class="row" href="/api/proxy_tesouro/raw">
+                        <span class="method">GET</span>
+                        <span class="path">/api/proxy_tesouro/raw</span>
+                        <span class="desc">HTML bruto do Tesouro Direto, pra inspeção</span>
+                    </a>
                 </section>
 
                 <footer>
@@ -365,7 +384,6 @@ async def home():
             </div>
 
             <script>
-                // Cálculo dinâmico baseado no ano atual
                 const anoAtual = new Date().getFullYear();
 
                 const titulosAlvo = [
@@ -379,13 +397,36 @@ async def home():
                 async function dispararGatilhoTesouro() {
                     const btn = document.getElementById('btn-atualizar');
                     const container = document.getElementById('monitor-list');
+                    const badge = document.getElementById('market-status-badge');
 
                     btn.disabled = true;
                     btn.innerText = "⏳ Buscando...";
                     container.innerHTML = '<div class="titulo-item"><span>Consultando Tesouro Direto...</span></div>';
 
                     try {
-                        // Adiciona parâmetro com timestamp para ignorar caches antigos ao clicar no botão
+                        // 1. Checa status no proxy
+                        const statusRes = await fetch('/api/proxy_tesouro/status');
+                        const statusData = await statusRes.json();
+
+                        if (statusData && statusData.mercado_aberto === false) {
+                            badge.className = "status-badge manutencao";
+                            badge.innerHTML = `<span style="font-size: 8px;">●</span> MANUTENÇÃO`;
+
+                            container.innerHTML = `
+                                <div class="titulo-item" style="border-color: #E8A33D55; background: #E8A33D10;">
+                                    <span style="color:#E8A33D; font-weight: 500;">
+                                        ⚠️ Mercado em manutenção no Tesouro Direto.
+                                    </span>
+                                </div>
+                            `;
+                            return;
+                        }
+
+                        // Mercado Operacional
+                        badge.className = "status-badge aberto";
+                        badge.innerHTML = `<span style="font-size: 8px;">●</span> ABERTO`;
+
+                        // 2. Traz os dados de taxas
                         const res = await fetch('/api/tesouro?t=' + Date.now());
                         const data = await res.json();
 
@@ -409,6 +450,8 @@ async def home():
                             container.innerHTML = '<div class="titulo-item"><span style="color:#E8A33D">Falha ao obter dados. Tente novamente.</span></div>';
                         }
                     } catch (e) {
+                        badge.className = "status-badge manutencao";
+                        badge.innerHTML = `<span style="font-size: 8px;">●</span> ERRO`;
                         container.innerHTML = '<div class="titulo-item"><span style="color:#ff5555">Erro na requisição.</span></div>';
                     } finally {
                         btn.disabled = false;
@@ -445,7 +488,6 @@ async def home():
                     }
                 }
 
-                // Carrega o ticker e dispara a busca inicial da sua lista ao abrir a página
                 carregarTicker();
                 dispararGatilhoTesouro();
             </script>

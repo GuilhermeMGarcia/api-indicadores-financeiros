@@ -6,6 +6,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from curl_cffi import requests
 from api.Cache import TTLCache
+from api.proxy_tesouro import verificar_status_tesouro
 
 router = APIRouter()
 
@@ -39,16 +40,12 @@ def _extrair_vencimento(nome: str, vencimento_csv: str) -> str:
     if vencimento_csv:
         return vencimento_csv
 
-    # Procura um ano de 4 dígitos no nome (ex: "Tesouro IPCA+ 2032" -> "01/01/2032")
     match = re.search(r"\b(20\d{2})\b", nome)
     if match:
         ano = match.group(1)
         return f"01/01/{ano}"
 
     return ""
-
-
-import time
 
 
 def _fetch_tesouro_com_sessao_sync(max_retries=3) -> tuple[str, str]:
@@ -68,12 +65,10 @@ def _fetch_tesouro_com_sessao_sync(max_retries=3) -> tuple[str, str]:
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
 
-                # 1. Abre a home para gerar cookies
                 res_home = session.get(URL_HOME_TESOURO, headers=headers_base, timeout=10)
                 if res_home.status_code != 200:
                     raise Exception(f"Falha ao abrir home do Tesouro: Status {res_home.status_code}")
 
-                # 2. Baixa os CSVs
                 res_investir = session.get(URL_INVESTIR_CSV, headers=headers_base, timeout=12)
                 res_resgatar = session.get(URL_RESGATAR_CSV, headers=headers_base, timeout=12)
 
@@ -84,11 +79,12 @@ def _fetch_tesouro_com_sessao_sync(max_retries=3) -> tuple[str, str]:
                     )
 
                 raise Exception(
-                    f"Erro ao baixar CSVs. Investir: {res_investir.status_code} | Resgatar: {res_resgatar.status_code}")
+                    f"Erro ao baixar CSVs. Investir: {res_investir.status_code} | Resgatar: {res_resgatar.status_code}"
+                )
 
         except Exception as e:
             if tentativa < max_retries:
-                time.sleep(1)  # Aguarda 1 segundo antes da próxima tentativa
+                time.sleep(1)
             else:
                 raise e
 
@@ -126,12 +122,24 @@ def _parse_resgatar_csv(texto: str) -> dict:
 @router.get("/tesouro")
 async def get_tesouro_bonds():
     """
-    Retorna preços e taxas do Tesouro Direto com warm-up de sessão prévia e bypass TLS.
+    Retorna preços e taxas do Tesouro Direto.
+    Verifica primeiro se o mercado está em manutenção para evitar erros de leitura.
     """
     cached = tesouro_cache.get("titulos")
     if cached is not None:
         return cached
 
+    # 1. Checagem prévia do status do mercado
+    status_mercado = await verificar_status_tesouro()
+    if isinstance(status_mercado, dict) and not status_mercado.get("mercado_aberto", True):
+        return {
+            "status": "MANUTENCAO",
+            "mensagem": "Mercado em Manutenção no Tesouro Direto",
+            "total": 0,
+            "titulos": []
+        }
+
+    # 2. Busca os dados caso o mercado esteja operacional
     try:
         loop = asyncio.get_event_loop()
         texto_investir, texto_resgatar = await loop.run_in_executor(
