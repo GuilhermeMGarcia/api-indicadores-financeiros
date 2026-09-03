@@ -10,16 +10,15 @@ router = APIRouter()
 @router.get("/stock/{ticker}")
 async def get_stock_data(ticker: str):
     """
-    Retorna os dados brutos contábeis (Fundamentus) e o Beta (QuantBrasil) em paralelo.
+    Retorna os dados brutos contábeis de 12 meses (Fundamentus) e o Beta (QuantBrasil) em paralelo.
     """
-    # 🎯 Dispara as duas buscas em paralelo para não perder velocidade
+    # 🎯 Dispara as duas buscas em paralelo
     soup_fundamentus, soup_qb = await asyncio.gather(
         get_fundamentus_html(ticker),
         get_quantbrasil_html(ticker),
         return_exceptions=True
     )
 
-    # Valida a requisição principal do Fundamentus
     if isinstance(soup_fundamentus, Exception) or not soup_fundamentus:
         raise HTTPException(status_code=404, detail="Ticker de ação não encontrado ou erro de conexão")
 
@@ -31,11 +30,7 @@ async def get_stock_data(ticker: str):
 
     res = {}
 
-    receita_count = 0
-    ebit_count = 0
-    lucro_count = 0
-
-    # Mapeamento exclusivo para DADOS BRUTOS (Sem os indicadores calculados)
+    # Mapeamento exclusivo para DADOS BRUTOS
     mapeamento_bruto = {
         "Últ balanço processado": ("ult_balanco_processado", lambda x: x),
         "Nro. Ações": ("qtd_acao", parse_int),
@@ -50,6 +45,13 @@ async def get_stock_data(ticker: str):
         "Patrim. Líq": ("patrimonio_liquido", parse_int),
     }
 
+    # Mapeamento da DRE (Apenas a primeira ocorrência = 12 meses)
+    mapeamento_dre_12m = {
+        "Receita Líquida": "receita_liquida_12m",
+        "EBIT": "ebit_12m",
+        "Lucro Líquido": "lucro_liquido_12m",
+    }
+
     for lbl_td, data_td in zip(labels, datas):
         lbl = lbl_td.get_text(strip=True).replace("?", "")
         val = data_td.get_text(strip=True)
@@ -59,21 +61,11 @@ async def get_stock_data(ticker: str):
                 key, func = mapeamento_bruto[lbl]
                 res[key] = func(val)
 
-            # Tratamento para duplicidades da DRE
-            elif lbl == "Receita Líquida":
-                key = "receita_liquida_12m" if receita_count == 0 else "receita_liquida_3m"
-                res[key] = parse_int(val)
-                receita_count += 1
-
-            elif lbl == "EBIT":
-                key = "ebit_12m" if ebit_count == 0 else "ebit_3m"
-                res[key] = parse_int(val)
-                ebit_count += 1
-
-            elif lbl == "Lucro Líquido":
-                key = "lucro_liquido_12m" if lucro_count == 0 else "lucro_liquido_3m"
-                res[key] = parse_int(val)
-                lucro_count += 1
+            # Captura DRE apenas se ainda NÃO foi adicionado ao dicionário (pega o de 12M e descarta o de 3M)
+            elif lbl in mapeamento_dre_12m:
+                key = mapeamento_dre_12m[lbl]
+                if key not in res:
+                    res[key] = parse_int(val)
 
         except Exception:
             continue
@@ -81,7 +73,7 @@ async def get_stock_data(ticker: str):
     if not res:
         raise HTTPException(status_code=404, detail="Nenhum dado bruto encontrado para este ticker")
 
-    # 🎯 Extrai o Beta do QuantBrasil em paralelo
+    # Extrai o Beta do QuantBrasil em paralelo
     if isinstance(soup_qb, Exception) or not soup_qb:
         res["beta_ibov_3a"] = None
     else:
