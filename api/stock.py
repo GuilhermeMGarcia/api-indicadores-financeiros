@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import APIRouter, HTTPException
 from api.utils import (
-    parse_int, get_fundamentus_html, get_quantbrasil_html, extract_beta_vs_ibov
+    parse_int, parse_percent, get_fundamentus_html, get_quantbrasil_html, extract_beta_vs_ibov
 )
 
 router = APIRouter()
@@ -10,7 +10,7 @@ router = APIRouter()
 @router.get("/stock/{ticker}")
 async def get_stock_data(ticker: str):
     """
-    Retorna os dados brutos contábeis de 12 meses (Fundamentus) e o Beta (QuantBrasil) em paralelo.
+    Retorna os dados brutos contábeis de 12 meses + CAGR de Receita (Fundamentus) e o Beta (QuantBrasil) em paralelo.
     """
     # 🎯 Dispara as duas buscas em paralelo
     soup_fundamentus, soup_qb = await asyncio.gather(
@@ -30,18 +30,16 @@ async def get_stock_data(ticker: str):
 
     res = {}
 
-    # Mapeamento exclusivo para DADOS BRUTOS
+    # Mapeamento ajustado sem métricas deriváveis e com o CAGR 5a
     mapeamento_bruto = {
         "Últ balanço processado": ("ult_balanco_processado", lambda x: x),
         "Nro. Ações": ("qtd_acao", parse_int),
-        "Valor de mercado": ("valor_de_mercado", parse_int),
-        "Valor da firma": ("valor_da_firma", parse_int),
+        "Cres. Rec (5a)": ("cagr_receita_5a", parse_percent),
 
         # Balanço Patrimonial
         "Ativo": ("ativo", parse_int),
         "Disponibilidades": ("disponibilidades", parse_int),
         "Dív. Bruta": ("divida_bruta", parse_int),
-        "Dív. Líquida": ("divida_liquida", parse_int),
         "Patrim. Líq": ("patrimonio_liquido", parse_int),
     }
 
