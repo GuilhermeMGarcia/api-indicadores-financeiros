@@ -8,28 +8,26 @@ API própria em Python, hospedada na Vercel, que centraliza dados contábeis bru
 
 Manter uma carteira de investimentos exige atualizar constantemente dados de balanço, DRE e taxas de renda fixa de dezenas de ativos. Fazer isso manualmente é lento e sujeito a erros. Esta API resolve isso: ela expõe endpoints simples e otimizados que retornam os dados já tratados, prontos para consumo por qualquer cliente HTTP — no meu caso, por scripts em Google Apps Script que atualizam automaticamente uma planilha de carteira em alto desempenho.
 
-Na versão **v1.3.6**, o endpoint de Ações foi refatorado para focar no fornecimento de **dados contábeis brutos de 12 meses** e métricas de mercado (como o Beta), repassando o cálculo de múltiplos e indicadores (P/L, ROE, ROIC, Margens) diretamente para as fórmulas da planilha.
+Na versão **v1.3.6**, o endpoint de Ações foi refatorado para focar no fornecimento de **dados contábeis brutos de 12 meses**, taxa de crescimento histórico e métricas de mercado (como o Beta), repassando o cálculo de múltiplos e métricas deriváveis (como Valor de Mercado, Dívida Líquida e EV) diretamente para as fórmulas da planilha.
 
 ## Endpoints
 
 ### `GET /api/stock/{ticker}`
 
-Retorna dados brutos contábeis (Fundamentus) de 12 meses e o Beta de 3 anos (QuantBrasil) executados em paralelo.
+Retorna dados brutos contábeis (Fundamentus) de 12 meses, CAGR de receita e o Beta de 3 anos (QuantBrasil) executados em paralelo.
 
 **Exemplo:** `GET /api/stock/CMIG4`
 
-**Resposta (13 campos principais):**
+**Resposta (11 campos principais):**
 
 | Campo | Tipo | Descrição |
 | --- | --- | --- |
 | `ult_balanco_processado` | String | Data do último balanço processado (ex: `30/06/2026`) |
 | `qtd_acao` | Integer | Número total de ações |
-| `valor_de_mercado` | Integer | Valor de mercado da empresa em BRL |
-| `valor_da_firma` | Integer | EV (Enterprise Value / Valor da firma) em BRL |
+| `cagr_receita_5a` | Float | Crescimento anual composto da receita nos últimos 5 anos (%) |
 | `ativo` | Integer | Ativo total |
 | `disponibilidades` | Integer | Caixa e equivalentes de caixa |
 | `divida_bruta` | Integer | Dívida bruta total |
-| `divida_liquida` | Integer | Dívida líquida total |
 | `patrimonio_liquido` | Integer | Patrimônio líquido |
 | `receita_liquida_12m` | Integer | Receita líquida dos últimos 12 meses |
 | `ebit_12m` | Integer | EBIT dos últimos 12 meses |
@@ -116,7 +114,7 @@ Rota de diagnóstico: retorna o HTML bruto do Fundamentus para um ticker, sem pa
 
 ## Cache
 
-Todas as rotas que realizam requisições externas (Fundamentus, QuantBrasil, B3/FNET e Tesouro Direto) usam um cache em memória com TTL de **30 minutos**, implementado em `Cache.py`. Isso reduz o número de requisições às fontes externas — protegendo contra bloqueio por excesso de tráfego — e diminui o tempo de resposta em chamadas repetidas.
+Todas as rotas que realizam requisições externas (Fundamentus, QuantBrasil, B3/FNET e Tesouro Direto) usam um cache em memória com TTL de **30 minutos**, implementado em `cache.py`. Isso reduz o número de requisições às fontes externas — protegendo contra bloqueio por excesso de tráfego — e diminui o tempo de resposta em chamadas repetidas.
 
 * `/api/stock` e `/api/fii` usam caches específicos com TTL de 30 minutos para amenizar requisições repetidas ao Fundamentus e QuantBrasil.
 * `/api/tesouro` mantém o cache consolidado dos CSVs de preços e taxas do Tesouro Direto.
