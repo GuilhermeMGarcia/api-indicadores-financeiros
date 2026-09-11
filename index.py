@@ -1,10 +1,9 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_redoc_html
 from fastapi.templating import Jinja2Templates
-from fastapi import Request
 
 from api.proxy import router as proxy_router
 from api.fii import router as fii_router
@@ -51,4 +50,7 @@ async def redoc_html():
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html"
+    )
