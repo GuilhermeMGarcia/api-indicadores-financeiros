@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.openapi.docs import get_redoc_html
@@ -14,7 +16,10 @@ from api.tesouro import router as tesouro_router
 from api.proxy_tesouro import router as proxy_tesouro_router
 from api.proxy_maisretorno import router as proxy_maisretorno_router
 
-templates = Jinja2Templates(directory="templates")
+
+# Obtém o caminho absoluto da pasta do projeto
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 app = FastAPI(
     title="🚀 Indicador API - Sistema de Inteligência Financeira",
