@@ -1,24 +1,26 @@
 # api-indicadores-financeiros
 
-API própria em Python, hospedada na Vercel, que centraliza dados contábeis brutos, indicadores de FIIs da B3, preços e taxas do Tesouro Direto, além de eventos regulatórios (CVM/FNET). Criada para alimentar automaticamente uma planilha de acompanhamento de carteira de investimentos no Google Sheets, eliminando a atualização manual de dados e otimizando a performance ao delegar o cálculo de indicadores para a própria planilha.
+API própria em Python, hospedada na Vercel, que centraliza dados contábeis brutos, indicadores de FIIs da B3, preços e taxas do Tesouro Direto, métricas avançadas de fundos/ações (Mais Retorno), além de eventos regulatórios (CVM/FNET). Criada para alimentar automaticamente uma planilha de acompanhamento de carteira de investimentos no Google Sheets, eliminando a atualização manual de dados e otimizando a performance ao delegar o cálculo de múltiplos para a própria planilha.
 
 🔗 **API em produção:** [https://api-indicadores-financeiros.vercel.app](https://api-indicadores-financeiros.vercel.app)
 
 ## Por que esse projeto existe
 
-Manter uma carteira de investimentos exige atualizar constantemente dados de balanço, DRE e taxas de renda fixa de dezenas de ativos. Fazer isso manualmente é lento e sujeito a erros. Esta API resolve isso: ela expõe endpoints simples e otimizados que retornam os dados já tratados, prontos para consumo por qualquer cliente HTTP — no meu caso, por scripts em Google Apps Script que atualizam automaticamente uma planilha de carteira em alto desempenho.
+Manter uma carteira de investimentos exige atualizar constantemente dados de balanço, DRE, métricas de risco/retorno e taxas de renda fixa de dezenas de ativos. Fazer isso manualmente é lento e sujeito a erros. Esta API resolve isso: ela expõe endpoints simples e otimizados que retornam os dados já tratados, prontos para consumo por qualquer cliente HTTP — no meu caso, por scripts em Google Apps Script que atualizam automaticamente uma planilha de carteira em alto desempenho.
 
-Na versão **v1.3.6**, o endpoint de Ações foi refatorado para focar no fornecimento de **dados contábeis brutos de 12 meses**, taxa de crescimento histórico e métricas de mercado (como o Beta), repassando o cálculo de múltiplos e métricas deriváveis (como Valor de Mercado, Dívida Líquida e EV) diretamente para as fórmulas da planilha.
+Na versão **v1.4.0**, o endpoint de Ações foi expandido para fornecer **15 colunas de dados**, combinando **dados contábeis brutos de 12 meses** (Fundamentus), métricas de volatilidade/Beta (QuantBrasil) e indicadores de rentabilidade/Sharpe históricos via integração com a **Mais Retorno**.
 
 ## Endpoints
 
 ### `GET /api/stock/{ticker}`
 
-Retorna dados brutos contábeis (Fundamentus) de 12 meses, CAGR de receita e o Beta de 3 anos (QuantBrasil) executados em paralelo.
+Retorna dados brutos contábeis (Fundamentus), CAGR de receita, Beta de 3 anos (QuantBrasil) e métricas consolidadas de rentabilidade e risco da Mais Retorno executados de forma assíncrona.
+
+> **Header Opcional:** `X-MaisRetorno-Key` (para autenticação nas métricas da Mais Retorno).
 
 **Exemplo:** `GET /api/stock/CMIG4`
 
-**Resposta (11 campos principais):**
+**Resposta (15 campos mapeados):**
 
 | Campo | Tipo | Descrição |
 | --- | --- | --- |
@@ -33,6 +35,10 @@ Retorna dados brutos contábeis (Fundamentus) de 12 meses, CAGR de receita e o B
 | `ebit_12m` | Integer | EBIT dos últimos 12 meses |
 | `lucro_liquido_12m` | Integer | Lucro líquido dos últimos 12 meses |
 | `beta_ibov_3a` | Float | Volatilidade relativa do ativo vs IBOVESPA (3 anos) |
+| `rentabilidade_total` | Float | Rentabilidade acumulada histórica (%) |
+| `sharpe_total` | Float | Índice Sharpe acumulado histórico |
+| `rentabilidade_12m` | Float | Rentabilidade nos últimos 12 meses (%) |
+| `sharpe_12m` | Float | Índice Sharpe nos últimos 12 meses |
 
 ---
 
@@ -96,32 +102,21 @@ Retorna eventos regulatórios recentes (fatos relevantes, informes, relatórios)
 
 ---
 
-### `GET /api/proxy_fnet/{cnpj}`
+### Ferramentas de Diagnóstico (Proxies)
 
-Busca os documentos regulatórios de um fundo diretamente na B3/FNET pelo CNPJ, já filtrados pelo mês corrente e por tipo de documento relevante (Relatório Gerencial, Informe Mensal, Informe Trimestral Estruturado). É o endpoint que `/api/calendar` consome internamente.
-
-**Exemplo:** `GET /api/proxy_fnet/11728688000147`
-
----
-
-### `GET /api/proxy/{ticker}`
-
-Rota de diagnóstico: retorna o HTML bruto do Fundamentus para um ticker, sem parsing. Útil para verificar rapidamente se o site mudou a estrutura das tabelas antes de mexer no parser.
-
-**Exemplo:** `GET /api/proxy/PETR4`
+* **`GET /api/proxy_fnet/{cnpj}`:** Busca documentos regulatórios de um fundo diretamente na B3/FNET pelo CNPJ, filtrados pelo mês corrente. Consumido internamente por `/api/calendar`.
+* **`GET /api/proxy_maisretorno/{ticker}`:** Rota de diagnóstico para consulta e verificação de payload bruto diretamente na API da Mais Retorno.
+* **`GET /api/proxy_quantbrasil/{ticker}`:** Rota de verificação dos dados extraídos do QuantBrasil.
+* **`GET /api/proxy_tesouro`:** Diagnóstico do parse do CSV bruto do Tesouro Direto.
+* **`GET /api/proxy/{ticker}`:** Retorna o HTML bruto do Fundamentus para validação de estrutura da página.
 
 ---
 
 ## Cache
 
-Todas as rotas que realizam requisições externas (Fundamentus, QuantBrasil, B3/FNET e Tesouro Direto) usam um cache em memória com TTL de **30 minutos**, implementado em `cache.py`. Isso reduz o número de requisições às fontes externas — protegendo contra bloqueio por excesso de tráfego — e diminui o tempo de resposta em chamadas repetidas.
+Todas as rotas que realizam requisições externas (Fundamentus, QuantBrasil, Mais Retorno, B3/FNET e Tesouro Direto) usam um cache em memória com TTL de **30 minutos**, implementado em `cache.py`. Isso reduz drasticamente o tráfego externo, evita *rate limiting* e garante respostas instantâneas em chamadas repetidas.
 
-* `/api/stock` e `/api/fii` usam caches específicos com TTL de 30 minutos para amenizar requisições repetidas ao Fundamentus e QuantBrasil.
-* `/api/tesouro` mantém o cache consolidado dos CSVs de preços e taxas do Tesouro Direto.
-* `/api/proxy` tem seu próprio cache de HTML, na mesma janela de 30 min.
-* `/api/proxy_fnet` cacheia o resultado já filtrado por CNPJ; como `/api/calendar` consome esse endpoint internamente, ele é beneficiado pelo mesmo cache sem necessidade de lógica própria.
-
-> **Observação:** por rodar em ambiente serverless (Vercel), o cache em memória vale enquanto a mesma instância da função segue "quente" — reduz bastante o tráfego repetido no uso real, mas não garante 100% de acerto em todo cenário (cold starts reiniciam o cache).
+> **Observação:** por rodar em ambiente serverless (Vercel), o cache em memória vale enquanto a instância da função permanecer "quente" (*warm start*).
 
 ---
 
@@ -129,10 +124,11 @@ Todas as rotas que realizam requisições externas (Fundamentus, QuantBrasil, B3
 
 A API opera como uma camada de agregação e estruturação de dados de múltiplas fontes públicas e de mercado:
 
-* **[Fundamentus](https://www.fundamentus.com.br/index.php):** Utilizado via web scraping para a extração dos dados contábeis brutos de Ações e indicadores de FIIs (`/api/stock` e `/api/fii`).
-* **[QuantBrasil](https://quantbrasil.com.br/):** Plataforma de análise utilizada para extração do Beta histórico (3 anos) vs IBOVESPA no endpoint de ações.
-* **[Tesouro Direto](https://www.tesourodireto.com.br/):** Fonte oficial dos arquivos CSV de preços e taxas de investimento e resgate de títulos públicos (`/api/tesouro`).
-* **[FNET / B3 (CVM)](https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM):** Sistema de entrega de documentos da CVM/B3 consumido pelos endpoints `/api/proxy_fnet` e `/api/calendar` para monitorar eventos regulatórios em tempo real.
+* **[Fundamentus](https://www.fundamentus.com.br/index.php):** Web scraping de dados contábeis brutos de Ações e indicadores de FIIs.
+* **[Mais Retorno](https://maisretorno.com/):** Métricas avançadas de risco e retorno (Índice Sharpe e rentabilidades acumuladas/12m).
+* **[QuantBrasil](https://quantbrasil.com.br/):** Extração do Beta histórico (3 anos) vs IBOVESPA.
+* **[Tesouro Direto](https://www.tesourodireto.com.br/):** Fonte oficial dos arquivos CSV de preços e taxas dos títulos públicos.
+* **[FNET / B3 (CVM)](https://fnet.bmfbovespa.com.br/fnet/publico/abrirGerenciadorDocumentosCVM):** Monitoramento de eventos e informes regulatórios em tempo real.
 
 > Este projeto é de uso pessoal/educacional. Os dados pertencem aos seus respectivos provedores de origem e devem ser utilizados respeitando os termos de uso de cada plataforma.
 
@@ -140,12 +136,12 @@ A API opera como uma camada de agregação e estruturação de dados de múltipl
 
 ## Stack
 
-* **Linguagem:** Python 3.x
-* **Framework Web:** FastAPI (com suporte assíncrono `asyncio`)
-* **Parsing / Web Scraping / Networking:** BeautifulSoup4, HTTP Clients (`httpx`, `requests`) e `curl-cffi` (impersonate Chrome 120 para conversação TLS e bypass de proteção WAF no Tesouro Direto)
+* **Linguagem:** Python 3.10+
+* **Framework Web:** FastAPI (com `asyncio` para I/O não bloqueante)
+* **Template Engine:** Jinja2
+* **Parsing / Web Scraping / Networking:** BeautifulSoup4, HTTP Clients (`httpx`, `requests`) e `curl-cffi` (impersonate Chrome para bypass de WAF/TLS)
 * **Servidor ASGI (dev):** Uvicorn
 * **Deploy:** Vercel (serverless functions)
-* **Configuração:** `vercel.json`, `requirements.txt`
 
 ---
 
@@ -160,17 +156,20 @@ Esta API é consumida por uma planilha de controle de carteira de investimentos 
 ## Rodando localmente
 
 ```bash
-git clone https://github.com/GuilhermeMGarcia/api-indicadores-financeiros.git
+git clone [https://github.com/GuilhermeMGarcia/api-indicadores-financeiros.git](https://github.com/GuilhermeMGarcia/api-indicadores-financeiros.git)
 cd api-indicadores-financeiros
 pip install -r requirements.txt
-uvicorn api.index:app --reload
+uvicorn index:app --reload
 
 ```
 
-A API sobe em `[http://127.0.0.1:8000](http://127.0.0.1:8000)`. A página inicial (`/`) traz um painel interativo com ticker tape dinâmico e atalhos para todos os endpoints; a documentação interativa fica em `/docs` (Swagger) e `/redoc` (ReDoc).
+A API sobe em `http://127.0.0.1:8000`. A página inicial (`/`) traz um painel interativo com ticker tape dinâmico e atalhos para os endpoints; a documentação interativa fica em `/docs` (Swagger) e `/redoc` (ReDoc).
 
 ---
 
 ## Autor
 
 G.Garcia
+```
+
+```
