@@ -144,6 +144,12 @@
             .btn-refresh:hover { opacity: 0.9; }
             .btn-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 
+            .last-update {
+                font-size: 10.5px;
+                color: var(--text-dim);
+                text-align: right;
+            }
+
             .titulos-list {
                 display: flex;
                 flex-direction: column;
@@ -278,9 +284,12 @@
                                 <span style="font-size: 8px;">●</span> VERIFICANDO
                             </span>
                         </div>
-                        <button id="btn-atualizar" class="btn-refresh" onclick="dispararGatilhoTesouro()">
-                            🔄 Atualizar Taxas
-                        </button>
+                        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px;">
+                            <button id="btn-atualizar" class="btn-refresh" onclick="dispararGatilhoTesouro()">
+                                🔄 Atualizar Taxas
+                            </button>
+                            <span id="ultima-atualizacao" class="last-update">Última atualização: —</span>
+                        </div>
                     </div>
                     <div class="titulos-list" id="monitor-list">
                         <div class="titulo-item"><span>Clique em Atualizar para buscar...</span></div>
@@ -394,6 +403,7 @@
                 const btn = document.getElementById('btn-atualizar');
                 const container = document.getElementById('monitor-list');
                 const badge = document.getElementById('market-status-badge');
+                const ultimaAtualizacaoEl = document.getElementById('ultima-atualizacao');
 
                 btn.disabled = true;
                 btn.innerText = "⏳ Buscando...";
@@ -402,6 +412,10 @@
                 try {
                     const statusRes = await fetch('/api/proxy_tesouro/status');
                     const statusData = await statusRes.json();
+
+                    if (statusData && statusData.ultima_atualizacao) {
+                        ultimaAtualizacaoEl.innerText = `Última atualização: ${statusData.ultima_atualizacao}`;
+                    }
 
                     if (statusData && statusData.mercado_aberto === false) {
                         badge.className = "status-badge manutencao";
@@ -445,6 +459,7 @@
                 } catch (e) {
                     badge.className = "status-badge manutencao";
                     badge.innerHTML = `<span style="font-size: 8px;">●</span> ERRO`;
+                    ultimaAtualizacaoEl.innerText = "Última atualização: erro de busca";
                     container.innerHTML = '<div class="titulo-item"><span style="color:#ff5555">Erro na requisição.</span></div>';
                 } finally {
                     btn.disabled = false;

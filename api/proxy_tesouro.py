@@ -87,6 +87,7 @@ async def verificar_status_tesouro():
                     "mercado_aberto": True,
                     "status_texto": "Mercado Aberto (Bypass)",
                     "detalhe": "Cloudflare WAF ativo. Status presumido aberto.",
+                    "ultima_atualizacao": "Indisponível (Bypass)",
                     "erro_conexao": True
                 }
 
@@ -94,6 +95,7 @@ async def verificar_status_tesouro():
                 "mercado_aberto": True,
                 "status_texto": "Mercado Aberto",
                 "detalhe": "Verificado via JSON Fallback",
+                "ultima_atualizacao": "Indisponível (JSON Fallback)",
                 "erro_conexao": False
             }
             proxy_tesouro_cache.set("status_mercado", status_resultado)
@@ -112,10 +114,26 @@ async def verificar_status_tesouro():
                 "mercado fechado" in texto_botao
         )
 
+        # 🎯 Extrai o texto da última atualização.
+        # OBS: a classe "info-response-status" se repete no DOM (ex.: também é usada no
+        # bloco de "Horário de funcionamento"), então não dá pra confiar no primeiro
+        # match do documento. Em vez disso, localiza o label "Última atualização:"
+        # e busca o valor dentro do MESMO container (div pai), pra pegar o span certo.
+        texto_atualizacao = "Não informada"
+        for label in soup.select("span.info-label-status"):
+            if "última atualização" in label.get_text(strip=True).lower():
+                container = label.find_parent("div")
+                valor_span = container.select_one("span.info-response-status") if container else None
+                if valor_span:
+                    strong_tag = valor_span.find("strong")
+                    texto_atualizacao = strong_tag.get_text(strip=True) if strong_tag else valor_span.get_text(strip=True)
+                break
+
         status_resultado = {
             "mercado_aberto": not em_manutencao,
             "status_texto": "Mercado em Manutenção" if em_manutencao else "Mercado Aberto",
             "detalhe": texto_botao if texto_botao else ("Em manutenção" if em_manutencao else "Operacional"),
+            "ultima_atualizacao": texto_atualizacao,
             "erro_conexao": False
         }
 
@@ -127,6 +145,7 @@ async def verificar_status_tesouro():
             "mercado_aberto": True,
             "status_texto": "Mercado Aberto",
             "detalhe": f"Erro de rede: {str(e)}",
+            "ultima_atualizacao": "Erro de busca",
             "erro_conexao": True
         }
 
